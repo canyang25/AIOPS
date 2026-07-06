@@ -1,16 +1,18 @@
 """Self-contained AIOps incident agent.
 
-Runs the full incident loop with an LLM tool-use agent (Anthropic): given a
-fault alert it queries metrics and logs, diagnoses a root cause, executes a
-remediation playbook, and writes an incident report -- calling the mock
-Prometheus / ELK / Ansible services in tools/ as its tools.
+Runs the full incident loop with an LLM tool-use agent: given a fault alert it
+queries metrics and logs, diagnoses a root cause, executes a remediation
+playbook, and writes an incident report -- calling the mock Prometheus / ELK /
+Ansible services in tools/ as its tools.
 
-Configuration (see .env.example):
-    ANTHROPIC_API_KEY     required for the live agent (falls back to --simulate without it)
-    ANTHROPIC_MODEL       default: claude-sonnet-5  (claude-opus-4-8 is the more capable option)
-    PROMETHEUS_URL        default: http://localhost:9091
-    ELK_URL               default: http://localhost:9093
-    ANSIBLE_URL           default: http://localhost:9092
+Works with any of these LLM backends (see .env.example):
+    Groq       free API key, no credit card -- set GROQ_API_KEY   (recommended)
+    Ollama     fully local, no key at all   -- set LLM_PROVIDER=ollama
+    Anthropic  Claude                       -- set ANTHROPIC_API_KEY
+    OpenAI     or any OpenAI-compatible API  -- set OPENAI_API_KEY (+ OPENAI_BASE_URL)
+
+With no backend configured it falls back to an offline --simulate walkthrough,
+so it never hard-fails.
 
 Usage:
     python agent.py db                 # run the real agent loop
@@ -38,7 +40,6 @@ except ImportError:  # dotenv is optional
     pass
 
 
-MODEL = os.getenv("ANTHROPIC_MODEL", "claude-sonnet-5")
 PROMETHEUS_URL = os.getenv("PROMETHEUS_URL", "http://localhost:9091").rstrip("/")
 ELK_URL = os.getenv("ELK_URL", "http://localhost:9093").rstrip("/")
 ANSIBLE_URL = os.getenv("ANSIBLE_URL", "http://localhost:9092").rstrip("/")
@@ -161,75 +162,141 @@ def _dispatch(name: str, tool_input: dict) -> dict:
         return {"error": f"{type(exc).__name__}: {exc}"}
 
 
-# --- Agent loop ----------------------------------------------------------------
+# --- Backend selection ---------------------------------------------------------
+
+def resolve_backend():
+    """Pick an LLM backend from env. Returns a config dict or None (=> simulate).
+
+    Precedence: explicit LLM_PROVIDER, else auto-detect by whichever key is set.
+    """
+    provider = os.getenv("LLM_PROVIDER", "").lower()
+    if not provider:
+        if os.getenv("GROQ_API_KEY"):
+            provider = "groq"
+        elif os.getenv("ANTHROPIC_API_KEY"):
+            provider = "anthropic"
+        elif os.getenv("OPENAI_API_KEY"):
+            provider = "openai"
+        else:
+            return None
+
+    if provider == "groq":
+        key = os.getenv("GROQ_API_KEY")
+        if not key:
+            return None
+        return {"kind": "openai", "base_url": "https://api.groq.com/openai/v1",
+                "api_key": key, "model": os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile")}
+    if provider == "ollama":
+        return {"kind": "openai", "base_url": os.getenv("OLLAMA_BASE_URL", "http://localhost:11434/v1"),
+                "api_key": "ollama", "model": os.getenv("OLLAMA_MODEL", "llama3.1")}
+    if provider == "openai":
+        key = os.getenv("OPENAI_API_KEY")
+        if not key:
+            return None
+        return {"kind": "openai", "base_url": os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1"),
+                "api_key": key, "model": os.getenv("OPENAI_MODEL", "gpt-4o-mini")}
+    if provider == "anthropic":
+        if not os.getenv("ANTHROPIC_API_KEY"):
+            return None
+        return {"kind": "anthropic", "model": os.getenv("ANTHROPIC_MODEL", "claude-sonnet-5")}
+    return None
+
+
+# --- Agent loops ---------------------------------------------------------------
+
+def _log_tool(name, tool_input, result):
+    print(f"  [tool] {name}({json.dumps(tool_input)})")
+    print(f"         -> {json.dumps(result)[:160]}")
+
+
+def _run_openai_compatible(alert: dict, cfg: dict) -> str:
+    """Tool-use loop over any OpenAI-compatible API (Groq, Ollama, OpenAI, ...)."""
+    from openai import OpenAI
+
+    client = OpenAI(base_url=cfg["base_url"], api_key=cfg["api_key"])
+    tools = [
+        {"type": "function", "function": {"name": t["name"], "description": t["description"], "parameters": t["input_schema"]}}
+        for t in TOOLS
+    ]
+    messages = [
+        {"role": "system", "content": SYSTEM_PROMPT},
+        {"role": "user", "content": f"Incident alert:\n{json.dumps(alert, indent=2)}"},
+    ]
+
+    for _ in range(MAX_ITERATIONS):
+        resp = client.chat.completions.create(model=cfg["model"], messages=messages, tools=tools, tool_choice="auto", max_tokens=2048)
+        msg = resp.choices[0].message
+        if not msg.tool_calls:
+            return msg.content or ""
+        messages.append({
+            "role": "assistant",
+            "content": msg.content or "",
+            "tool_calls": [
+                {"id": tc.id, "type": "function", "function": {"name": tc.function.name, "arguments": tc.function.arguments}}
+                for tc in msg.tool_calls
+            ],
+        })
+        for tc in msg.tool_calls:
+            args = json.loads(tc.function.arguments or "{}")
+            result = _dispatch(tc.function.name, args)
+            _log_tool(tc.function.name, args, result)
+            messages.append({"role": "tool", "tool_call_id": tc.id, "content": json.dumps(result)})
+    return ""
+
+
+def _run_anthropic(alert: dict, cfg: dict) -> str:
+    """Tool-use loop over the Anthropic Messages API."""
+    import anthropic
+
+    client = anthropic.Anthropic()
+    messages = [{"role": "user", "content": f"Incident alert:\n{json.dumps(alert, indent=2)}"}]
+
+    for _ in range(MAX_ITERATIONS):
+        resp = client.messages.create(model=cfg["model"], max_tokens=2048, system=SYSTEM_PROMPT, tools=TOOLS, messages=messages)
+        messages.append({"role": "assistant", "content": resp.content})
+        if resp.stop_reason != "tool_use":
+            return "".join(b.text for b in resp.content if b.type == "text")
+        tool_results = []
+        for block in resp.content:
+            if block.type == "tool_use":
+                result = _dispatch(block.name, block.input)
+                _log_tool(block.name, block.input, result)
+                tool_results.append({"type": "tool_result", "tool_use_id": block.id, "content": json.dumps(result)})
+        messages.append({"role": "user", "content": tool_results})
+    return ""
+
 
 def run_agent(scenario_name: str) -> int:
     """Run the live tool-use loop. Falls back to simulate() on any failure."""
-    if not os.getenv("ANTHROPIC_API_KEY"):
-        print("No ANTHROPIC_API_KEY set -- running offline simulation instead.\n")
-        return simulate(scenario_name)
-
-    try:
-        import anthropic
-    except ImportError:
-        print("The 'anthropic' package is not installed (pip install -r requirements.txt).")
-        print("Falling back to offline simulation.\n")
+    cfg = resolve_backend()
+    if cfg is None:
+        print("No LLM backend configured -- running offline simulation instead.")
+        print("Set GROQ_API_KEY (free, no credit card) to run the real agent. See .env.example.\n")
         return simulate(scenario_name)
 
     scenario = SCENARIOS[scenario_name]
     # Hide the ground-truth answers from the agent -- it must derive them.
     alert = {k: v for k, v in scenario.items() if not k.startswith("expected_")}
 
-    print(f"Dispatching AIOps agent for scenario '{scenario_name}' (model: {MODEL})")
+    print(f"Dispatching AutoSRE agent for '{scenario_name}' via {cfg['kind']} ({cfg['model']})")
     print(f"  Alert: {alert['alert_id']} -- {alert['description']}\n")
 
-    client = anthropic.Anthropic()
-    messages = [{"role": "user", "content": f"Incident alert:\n{json.dumps(alert, indent=2)}"}]
-
     try:
-        final_report = None
-        for _ in range(MAX_ITERATIONS):
-            resp = client.messages.create(
-                model=MODEL,
-                max_tokens=2048,
-                system=SYSTEM_PROMPT,
-                tools=TOOLS,
-                messages=messages,
-            )
-            messages.append({"role": "assistant", "content": resp.content})
-
-            if resp.stop_reason != "tool_use":
-                final_report = "".join(b.text for b in resp.content if b.type == "text")
-                break
-
-            tool_results = []
-            for block in resp.content:
-                if block.type == "tool_use":
-                    print(f"  [tool] {block.name}({json.dumps(block.input)})")
-                    result = _dispatch(block.name, block.input)
-                    print(f"         -> {json.dumps(result)[:160]}")
-                    tool_results.append(
-                        {
-                            "type": "tool_result",
-                            "tool_use_id": block.id,
-                            "content": json.dumps(result),
-                        }
-                    )
-            messages.append({"role": "user", "content": tool_results})
+        if cfg["kind"] == "anthropic":
+            report = _run_anthropic(alert, cfg)
         else:
-            print("Reached max iterations without a final report.")
-            return 1
+            report = _run_openai_compatible(alert, cfg)
     except Exception as exc:
         print(f"Agent run failed ({type(exc).__name__}: {exc}). Falling back to simulation.\n")
         return simulate(scenario_name)
 
-    if not final_report:
-        print("Agent produced no report.")
+    if not report:
+        print("Agent produced no report (hit iteration limit or empty response).")
         return 1
 
     print("\n=== Incident report ===\n")
-    print(final_report)
-    _write_report(scenario, final_report)
+    print(report)
+    _write_report(scenario, report)
     return 0
 
 
