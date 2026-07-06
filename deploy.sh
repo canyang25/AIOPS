@@ -19,7 +19,7 @@ services:
     volumes:
       - ./tools/mock_prometheus.py:/app/mock.py
     working_dir: /app
-    command: sh -c "pip install -i https://pypi.tuna.tsinghua.edu.cn/simple flask && python mock.py"
+    command: sh -c "pip install flask && python mock.py"
 
   mock-ansible:
     image: python:3.9-slim
@@ -28,7 +28,7 @@ services:
     volumes:
       - ./tools/mock_ansible.py:/app/mock.py
     working_dir: /app
-    command: sh -c "pip install -i https://pypi.tuna.tsinghua.edu.cn/simple flask && python mock.py"
+    command: sh -c "pip install flask && python mock.py"
 
   mock-elk:
     image: python:3.9-slim
@@ -37,12 +37,7 @@ services:
     volumes:
       - ./tools/mock_elk.py:/app/mock.py
     working_dir: /app
-    command: sh -c "pip install -i https://pypi.tuna.tsinghua.edu.cn/simple flask && python mock.py"
-
-networks:
-  default:
-    name: aiops_default
-    external: true
+    command: sh -c "pip install flask && python mock.py"
 EOF
 
 # Generate sample fault scenarios (idempotent)

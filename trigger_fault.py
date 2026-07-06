@@ -1,115 +1,160 @@
-import requests
+"""Trigger a fault scenario against the AIOps agent.
+
+Sends a fault alert to a Dify Workflow app, which then autonomously queries
+metrics/logs, diagnoses a root cause, runs a remediation playbook, and writes
+an incident report.
+
+Configuration comes from environment variables (see .env.example):
+    DIFY_API_BASE           e.g. http://localhost/v1
+    DIFY_WORKFLOW_API_KEY   your Dify workflow app key (starts with "app-")
+
+Usage:
+    python trigger_fault.py db                 # send the DB scenario to Dify
+    python trigger_fault.py disk --simulate    # offline walkthrough, no server
+    python trigger_fault.py --list             # list available scenarios
+"""
+
+import argparse
+import os
 import sys
-import time
+
+import requests
+
+try:
+    from dotenv import load_dotenv
+
+    load_dotenv()
+except ImportError:  # dotenv is optional; env vars still work without it.
+    pass
 
 
-def trigger_fault_scenario(scenario_name: str) -> None:
-    """Trigger a fault scenario by sending an alert to Dify webhook."""
+DIFY_API_BASE = os.getenv("DIFY_API_BASE", "http://localhost/v1")
+DIFY_WORKFLOW_API_KEY = os.getenv("DIFY_WORKFLOW_API_KEY", "")
+WORKFLOW_URL = f"{DIFY_API_BASE.rstrip('/')}/workflows/run"
 
-    scenarios = {
-        "db": {
-            "alert_id": "ALERT-DB-001",
-            "service": "order-service",
-            "severity": "critical",
-            "description": "Order API latency increased from 200ms to 1.5s, user complaints rising.",
-            "timestamp": "2025-06-04T14:00:00Z",
-            "metrics": ["response_time", "db_connections"],
-            "expected_root_cause": "Database connection pool misconfiguration",
-        },
-        "disk": {
-            "alert_id": "ALERT-DISK-001",
-            "service": "file-service",
-            "severity": "high",
-            "description": "/data partition usage reached 98%, service unavailable.",
-            "timestamp": "2025-06-04T10:30:00Z",
-            "metrics": ["disk_usage", "io_wait"],
-            "expected_root_cause": "Disk space exhausted",
-        },
-        "network": {
-            "alert_id": "ALERT-NET-001",
-            "service": "payment-service",
-            "severity": "critical",
-            "description": "Payment service network abnormal, failure rate increased.",
-            "timestamp": "2025-06-04T16:45:00Z",
-            "metrics": ["packet_loss", "latency"],
-            "expected_root_cause": "Network partition fault",
-        },
+SCENARIOS = {
+    "db": {
+        "alert_id": "ALERT-DB-001",
+        "service": "order-service",
+        "severity": "critical",
+        "description": "Order API latency increased from 200ms to 1.5s, user complaints rising.",
+        "timestamp": "2025-06-04T14:00:00Z",
+        "metrics": "response_time, db_connections",
+        "expected_root_cause": "Database connection pool misconfiguration",
+        "expected_remediation": "restore_db_pool.yml (max_connections 50 -> 200)",
+    },
+    "disk": {
+        "alert_id": "ALERT-DISK-001",
+        "service": "file-service",
+        "severity": "high",
+        "description": "/data partition usage reached 98%, service unavailable.",
+        "timestamp": "2025-06-04T10:30:00Z",
+        "metrics": "disk_usage, io_wait",
+        "expected_root_cause": "Disk space exhausted",
+        "expected_remediation": "clean_disk_space.yml (free ~15GB of temp files)",
+    },
+    "network": {
+        "alert_id": "ALERT-NET-001",
+        "service": "payment-service",
+        "severity": "critical",
+        "description": "Payment service network abnormal, failure rate increased.",
+        "timestamp": "2025-06-04T16:45:00Z",
+        "metrics": "packet_loss, latency",
+        "expected_root_cause": "Network partition fault",
+        "expected_remediation": "restart_service.yml (restart payment-service)",
+    },
+}
+
+
+def send_to_dify(scenario_name: str) -> int:
+    """Send the scenario to the Dify Workflow API and print the result."""
+    scenario = SCENARIOS[scenario_name]
+
+    if not DIFY_WORKFLOW_API_KEY:
+        print("Error: DIFY_WORKFLOW_API_KEY is not set.")
+        print("Copy .env.example to .env and add your key, or run with --simulate.")
+        return 1
+
+    payload = {
+        "inputs": scenario,
+        "response_mode": "blocking",
+        "user": f"aiops-{scenario_name}",
+    }
+    headers = {
+        "Content-Type": "application/json",
+        "Authorization": f"Bearer {DIFY_WORKFLOW_API_KEY}",
     }
 
-    if scenario_name not in scenarios:
-        print(f"Unknown scenario '{scenario_name}'. Available: {list(scenarios.keys())}")
-        return
-
-    scenario = scenarios[scenario_name]
-
-    # Dify webhook on your ECS (public IP 121.199.78.214)
-    webhook_url = "http://121.199.78.214:8080/api/webhook/fault"
-
-    print(f"Triggering fault scenario: {scenario_name}")
-    print(f"Description: {scenario['description']}")
+    print(f"Triggering fault scenario '{scenario_name}' -> {WORKFLOW_URL}")
+    print(f"  {scenario['description']}\n")
 
     try:
-        response = requests.post(webhook_url, json=scenario, timeout=30)
-    except Exception as exc:
-        print(f"Request error: {exc}")
-        return
+        response = requests.post(WORKFLOW_URL, json=payload, headers=headers, timeout=60)
+    except requests.RequestException as exc:
+        print(f"Request failed: {exc}")
+        return 1
 
-    if response.status_code == 200:
-        try:
-            result = response.json()
-        except ValueError:
-            result = {}
-        print("Dify agent received alert, processing...")
-        tracking_id = result.get("tracking_id", "N/A")
-        print(f"Tracking ID: {tracking_id}")
+    if response.status_code != 200:
+        print(f"Workflow call failed (HTTP {response.status_code}):")
+        print(response.text)
+        return 1
 
-        # Simple wait for processing (demo only)
-        time.sleep(5)
+    try:
+        result = response.json()
+    except ValueError:
+        print("Response was not valid JSON:")
+        print(response.text)
+        return 1
 
-        print("\nExpected analysis flow:")
-        print(f" 1. Query metrics for service {scenario['service']} ({scenario['metrics']})")
-        print(" 2. Retrieve related error logs")
-        print(f" 3. Analyze root cause: {scenario['expected_root_cause']}")
-        print(" 4. Execute automated repair via Ansible mock")
-        print(" 5. Generate incident report")
-    else:
-        print(f"Webhook call failed with status code: {response.status_code}")
-        print(f"Response body: {response.text}")
+    print(f"Workflow Run ID: {result.get('workflow_run_id', 'N/A')}")
+    outputs = (result.get("data") or {}).get("outputs") or {}
+    print("\n=== Agent output ===")
+    print(outputs)
+    return 0
 
 
-def manual_test() -> None:
-    """Manual dialog style test (simulated)."""
-    print("\nManual dialog test mode")
-    print("Enter a fault description, the AIOps agent will diagnose (simulated).")
-    print("Example: 'Order service is slow, please analyze.'")
-    print("Enter 'quit' to exit.\n")
+def simulate(scenario_name: str) -> int:
+    """Print the closed-loop the agent runs, without contacting any server."""
+    scenario = SCENARIOS[scenario_name]
 
-    while True:
-        user_input = input("You: ").strip()
-        if not user_input:
-            continue
-        if user_input.lower() == "quit":
-            break
+    print(f"[SIMULATED] Fault scenario: {scenario_name}")
+    print(f"  Alert:   {scenario['alert_id']} ({scenario['severity']})")
+    print(f"  Service: {scenario['service']}")
+    print(f"  Symptom: {scenario['description']}\n")
 
-        print("AIOps Agent: Analyzing your description...")
-        print("  [Tool] Querying order-service metrics...")
-        print("  [Tool] Retrieving related logs...")
-        print("  [Analysis] Detected DB connection pool anomaly...")
-        print("  [Action] Rolling back connection pool configuration...")
-        print("  Done. Latency back to normal.")
-        print("  Report: root cause - database connection pool misconfiguration.")
+    steps = [
+        f"Query metrics from Prometheus  -> {scenario['service']}: {scenario['metrics']}",
+        f"Retrieve logs from ELK         -> scanning for ERROR/WARN on {scenario['service']}",
+        f"Diagnose root cause (LLM)      -> {scenario['expected_root_cause']}",
+        f"Execute remediation (Ansible)  -> {scenario['expected_remediation']}",
+        "Generate incident report        -> summary + timeline + resolution",
+    ]
+    for i, step in enumerate(steps, 1):
+        print(f"  {i}. {step}")
+
+    print("\nRun the real loop by pointing DIFY_* env vars at a live Dify workflow.")
+    return 0
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument("scenario", nargs="?", choices=sorted(SCENARIOS), help="fault scenario to trigger")
+    parser.add_argument("--simulate", action="store_true", help="print the agent loop offline (no server needed)")
+    parser.add_argument("--list", action="store_true", help="list available scenarios and exit")
+    args = parser.parse_args()
+
+    if args.list:
+        print("Available scenarios:")
+        for name, s in SCENARIOS.items():
+            print(f"  {name:8} {s['service']:16} {s['description']}")
+        return 0
+
+    if not args.scenario:
+        parser.print_help()
+        return 1
+
+    return simulate(args.scenario) if args.simulate else send_to_dify(args.scenario)
 
 
 if __name__ == "__main__":
-    if len(sys.argv) > 1:
-        if sys.argv[1] == "manual":
-            manual_test()
-        else:
-            trigger_fault_scenario(sys.argv[1])
-    else:
-        print("Usage:")
-        print("  python trigger_fault.py db       # database fault")
-        print("  python trigger_fault.py disk     # disk fault")
-        print("  python trigger_fault.py network  # network fault")
-        print("  python trigger_fault.py manual   # dialog test")
-
+    sys.exit(main())
