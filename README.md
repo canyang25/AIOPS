@@ -1,6 +1,6 @@
-# AIOps Incident Agent
+# AutoSRE
 
-> An LLM agent that takes a production alert from detection to resolution — **autonomously**. It pulls metrics and logs, diagnoses the root cause, runs a remediation playbook, and writes the incident report. No human in the loop.
+> An autonomous, LLM-powered Site Reliability Engineer. Give it a production alert and it pulls the metrics and logs, diagnoses the root cause, runs the fix, and writes the incident report — **no human in the loop**.
 
 ![Python](https://img.shields.io/badge/python-3.10+-blue)
 ![Agent](https://img.shields.io/badge/agent-Claude%20tool--use-d97757)
