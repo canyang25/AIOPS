@@ -1,6 +1,6 @@
 # AutoSRE
 
-> An autonomous, LLM-powered Site Reliability Engineer. Give it a production alert and it pulls the metrics and logs, diagnoses the root cause, runs the fix, and writes the incident report — **no human in the loop**.
+> An autonomous, LLM-powered Site Reliability Engineer. Give it a production alert and it pulls the metrics and logs, diagnoses the root cause, runs the fix, and writes the incident report.
 
 ![Python](https://img.shields.io/badge/python-3.10+-blue)
 ![Agent](https://img.shields.io/badge/agent-LLM%20tool--use-d97757)
