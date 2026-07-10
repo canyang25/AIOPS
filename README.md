@@ -4,10 +4,12 @@
 
 ![Python](https://img.shields.io/badge/python-3.10+-blue)
 ![Agent](https://img.shields.io/badge/agent-LLM%20tool--use-d97757)
-![Runs free](https://img.shields.io/badge/runs%20free-Groq%20%7C%20Ollama-2ea44f)
+![Runs free](https://img.shields.io/badge/runs%20free-Groq%20%7C%20Gemini%20%7C%20Ollama-2ea44f)
 ![License](https://img.shields.io/badge/license-MIT-green)
 
-This is a reference implementation of a **closed-loop AIOps agent**. A fault alert fires; the agent investigates like an on-call SRE would — check the dashboards, read the logs, form a hypothesis, apply a fix, verify — and hands back a written report. The agent is a self-contained Python tool-use loop (Anthropic / Claude); observability backends (Prometheus, Elasticsearch/ELK, Ansible) are provided as lightweight mocks so the whole thing runs on a laptop.
+This is a reference implementation of a **closed-loop AIOps agent**. A fault alert fires; the agent investigates like an on-call SRE would — check the dashboards, read the logs, form a hypothesis, apply a fix, verify — and hands back a written report. The agent is a self-contained Python tool-use loop that works with any major LLM provider; observability backends (Prometheus, Elasticsearch/ELK, Ansible) are provided as lightweight mocks so the whole thing runs on a laptop.
+
+> **This is a real LLM agent, not a scripted demo.** The agent makes real API calls to whichever LLM you configure, reasons over tool outputs, and decides what to do next. The mock services provide realistic data for the agent to work with — swap them out for real observability backends and it works the same way.
 
 ## How it works
 
@@ -15,7 +17,7 @@ This is a reference implementation of a **closed-loop AIOps agent**. A fault ale
 flowchart LR
     ALERT([Fault alert]) --> AGENT
 
-    subgraph AGENT [AIOps Agent · Python + Claude tool-use]
+    subgraph AGENT [AIOps Agent · Python + LLM tool-use]
         direction TB
         D1[1 · Gather signals]
         D2[2 · Diagnose root cause]
@@ -50,20 +52,42 @@ Three faults ship with the demo, each with a known ground-truth root cause so yo
 
 ## Quickstart
 
-### 1. See the loop without any setup
-
-There's an offline mode that walks through exactly what the agent does — no servers, no keys:
-
-```bash
-python agent.py db --simulate
-python agent.py --list
-```
-
-### 2. Run the mock backends
+### 1. Install dependencies
 
 ```bash
 pip install -r requirements.txt
-./deploy.sh          # starts mock Prometheus / ELK / Ansible via docker compose
+```
+
+### 2. Add your API key
+
+```bash
+cp .env.example .env
+```
+
+Open `.env` and uncomment **one** provider, pasting in your key:
+
+| Backend        | Cost              | What to set in `.env`                                    | Get a key |
+| -------------- | ----------------- | -------------------------------------------------------- | --------- |
+| **Groq**       | Free (no card)    | `GROQ_API_KEY=gsk_...`                                  | [console.groq.com/keys](https://console.groq.com/keys) |
+| **Gemini**     | Free tier         | `GEMINI_API_KEY=...`                                     | [aistudio.google.com/apikey](https://aistudio.google.com/apikey) |
+| **Ollama**     | Free, fully local | `LLM_PROVIDER=ollama` (+ [install Ollama](https://ollama.com)) | — |
+| Anthropic      | Paid              | `ANTHROPIC_API_KEY=sk-ant-...`                           | [console.anthropic.com](https://console.anthropic.com) |
+| OpenAI / other | Paid              | `OPENAI_API_KEY=sk-...` (+ `OPENAI_BASE_URL` if needed) | [platform.openai.com](https://platform.openai.com) |
+
+> **Your key stays local.** The `.env` file is git-ignored and never committed. Only `.env.example` (with placeholder values) is tracked.
+
+### 3. Start the mock backends
+
+**Without Docker** (recommended — just Python):
+
+```bash
+./start_services.sh
+```
+
+**With Docker** (if you prefer):
+
+```bash
+./deploy.sh
 ```
 
 | Service         | URL                     | Role                         |
@@ -72,56 +96,60 @@ pip install -r requirements.txt
 | Mock ELK        | http://localhost:9093   | Log search                   |
 | Mock Ansible    | http://localhost:9092   | Playbook execution           |
 
-### 3. Run the real agent
-
-Grab a **free** Groq API key (no credit card) at [console.groq.com/keys](https://console.groq.com/keys), then:
+### 4. Run the agent
 
 ```bash
-cp .env.example .env      # then add your GROQ_API_KEY
-python agent.py db
+python agent.py db          # database pool exhaustion scenario
+python agent.py disk        # disk space full scenario
+python agent.py network     # network partition scenario
+python agent.py --list      # list all available scenarios
 ```
 
-The agent calls the three mock tools, diagnoses the root cause, runs the matching
-playbook, and writes a report to `reports/incident-*.md`. Without a key it
-automatically falls back to the offline walkthrough, so it never hard-fails.
+The agent calls the mock tools, diagnoses the root cause, runs the matching
+playbook, and writes a report to `reports/incident-*.md`.
 
-Any LLM backend works — the agent auto-detects whichever you configure in `.env`:
+### 5. (Optional) Preview without any setup
 
-| Backend       | Cost              | Setup                                     |
-| ------------- | ----------------- | ----------------------------------------- |
-| **Groq**      | Free (no card)    | `GROQ_API_KEY`                            |
-| **Ollama**    | Free, fully local | `LLM_PROVIDER=ollama` (+ install Ollama)  |
-| Anthropic     | Paid              | `ANTHROPIC_API_KEY`                       |
-| OpenAI / etc. | Paid              | `OPENAI_API_KEY` (+ `OPENAI_BASE_URL`)    |
+There's an offline simulation that walks through the agent's logic — no servers, no keys:
 
-> **Optional — Dify path:** `trigger_fault.py` sends the same alert to a [Dify](https://dify.ai)
-> Workflow app instead of running the loop in Python. Set `DIFY_*` in `.env` and run
-> `python trigger_fault.py db`. (No Dify workflow ships with this repo — see Notes.)
+```bash
+python agent.py db --simulate
+```
 
 ## Repo structure
 
 ```
 .
-├── agent.py           # the agent: Claude tool-use loop over the mock tools
-├── trigger_fault.py   # optional: send the alert to a Dify workflow (or --simulate)
-├── deploy.sh          # spin up the mock observability stack via docker compose
+├── agent.py              # the agent: LLM tool-use loop over the mock tools
+├── trigger_fault.py      # optional: send the alert to a Dify workflow (or --simulate)
+├── start_services.sh     # start mock backends locally (no Docker)
+├── deploy.sh             # start mock backends via Docker Compose
 ├── tools/
 │   ├── mock_prometheus.py   # metrics API  (:9091)
 │   ├── mock_elk.py          # log search API (:9093)
 │   └── mock_ansible.py      # playbook runner API (:9092)
-├── .env.example       # configuration template
+├── .env.example          # configuration template — copy to .env and add your key
 └── requirements.txt
 ```
 
 ## Tech stack
 
-- **Agent:** Python LLM tool-use loop — backend-agnostic (Groq, Ollama, Anthropic, OpenAI-compatible)
+- **Agent:** Python LLM tool-use loop — backend-agnostic (Groq, Gemini, Ollama, Anthropic, OpenAI-compatible)
 - **Tools:** Flask mock services standing in for Prometheus, Elasticsearch/ELK, and Ansible
 - **Optional orchestration:** [Dify](https://dify.ai) workflow (via `trigger_fault.py`)
 
+## Connecting real backends
+
+The mock services follow the same API contracts as their real counterparts. To point the agent at real infrastructure:
+
+1. Replace `PROMETHEUS_URL` / `ELK_URL` / `ANSIBLE_URL` in `.env` with your actual service endpoints.
+2. If your real APIs require authentication, add the appropriate headers in the tool wrapper functions in `agent.py`.
+
+The agent's reasoning loop is the same either way — it uses the tool outputs to diagnose and remediate.
+
 ## Notes
 
-- **Primary path is `agent.py`** — a self-contained loop that needs only an `ANTHROPIC_API_KEY` and the local mocks. It falls back to an offline walkthrough when no key is set.
+- **Primary path is `agent.py`** — a self-contained loop that needs only an API key and the mock backends. It falls back to an offline walkthrough when no key is set.
 - The original Dify Workflow definition (DSL) is **not** included — that hosted instance is gone. `trigger_fault.py` remains for anyone who wants to rebuild a Dify workflow, but it isn't required to run the project.
 - The mock services return canned-but-realistic data; they exist to exercise the agent's reasoning, not to be real observability backends.
 

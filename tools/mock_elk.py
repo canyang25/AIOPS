@@ -17,48 +17,19 @@ logger = logging.getLogger(__name__)
 
 app = Flask(__name__)
 
-# ---------------------------------------------------------------------------
-# Default log database (fallback when fixture file is absent)
-# ---------------------------------------------------------------------------
-_DEFAULT_LOGS = {
-    "order-service": [
-        {"timestamp": "2025-06-04T13:55:00Z", "level": "INFO", "message": "OrderService started successfully"},
-        {"timestamp": "2025-06-04T14:00:00Z", "level": "ERROR", "message": "DB connection timeout (500ms > 200ms)"},
-        {"timestamp": "2025-06-04T14:01:00Z", "level": "WARN", "message": "Database connection pool at 98% capacity"},
-        {"timestamp": "2025-06-04T14:02:00Z", "level": "ERROR", "message": "DB connection timeout (520ms)"},
-        {"timestamp": "2025-06-04T14:03:00Z", "level": "ERROR", "message": "Transaction rollback due to timeout"},
-    ],
-    "file-service": [
-        {"timestamp": "2025-06-04T10:25:00Z", "level": "WARN", "message": "/data partition usage reached 90%"},
-        {"timestamp": "2025-06-04T10:28:00Z", "level": "ERROR", "message": "No space left on device"},
-        {"timestamp": "2025-06-04T10:30:00Z", "level": "ERROR", "message": "Failed to write log file: disk full"},
-    ],
-    "payment-service": [
-        {"timestamp": "2025-06-04T16:40:00Z", "level": "WARN", "message": "Network latency increased to 800ms"},
-        {"timestamp": "2025-06-04T16:45:00Z", "level": "ERROR", "message": "Connection reset by peer"},
-        {"timestamp": "2025-06-04T16:46:00Z", "level": "ERROR", "message": "Payment gateway timeout"},
-    ],
-}
-
 _FIXTURE_PATH = os.path.join(
     os.path.dirname(os.path.abspath(__file__)), "..", "fixtures", "logs.json"
 )
 
 
 def _load_logs():
-    """Load log entries from the fixture file, falling back to defaults."""
-    try:
-        with open(_FIXTURE_PATH, "r", encoding="utf-8") as fh:
-            data = json.load(fh)
-            logger.info("Loaded log data from %s", _FIXTURE_PATH)
-            return data
-    except FileNotFoundError:
-        logger.warning(
-            "Fixture file %s not found – using built-in defaults", _FIXTURE_PATH
-        )
-        # Return a deep copy so that runtime mutations don't affect the constant
-        import copy
-        return copy.deepcopy(_DEFAULT_LOGS)
+    """Load log entries from the fixture file."""
+    if not os.path.exists(_FIXTURE_PATH):
+        raise FileNotFoundError(f"Fixture file {_FIXTURE_PATH} not found")
+    with open(_FIXTURE_PATH, "r", encoding="utf-8") as fh:
+        data = json.load(fh)
+        logger.info("Loaded log data from %s", _FIXTURE_PATH)
+        return data
 
 
 # Mutable log database (loaded at startup, mutated by _inject / _reset)
@@ -68,6 +39,10 @@ _logs_database: dict = _load_logs()
 # ---------------------------------------------------------------------------
 # Search route – also serves as the catch-all fallback
 # ---------------------------------------------------------------------------
+
+@app.route("/health", methods=["GET"], strict_slashes=False)
+def health():
+    return jsonify({"status": "ok", "service": "mock-elk"})
 
 @app.route("/_search", methods=["GET", "POST"], strict_slashes=False)
 def search_logs_main():
@@ -135,10 +110,12 @@ def _do_search():
     logs = _logs_database.get(service, [])
     filtered_logs = [log for log in logs if not level or log["level"] == level]
 
+    size = request.args.get("size", 10, type=int)
+
     return jsonify({
         "hits": {
             "total": {"value": len(filtered_logs)},
-            "hits": [{"_source": log} for log in filtered_logs[-5:]],
+            "hits": [{"_source": log} for log in filtered_logs[-size:]],
         }
     })
 
