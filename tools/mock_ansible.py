@@ -32,76 +32,17 @@ execution_logs: list = []
 PROMETHEUS_URL = os.environ.get("PROMETHEUS_URL", "http://localhost:9091")
 ELK_URL = os.environ.get("ELK_URL", "http://localhost:9093")
 
-# ---------------------------------------------------------------------------
-# Default playbook definitions (fallback when fixture file is absent)
-# ---------------------------------------------------------------------------
-_DEFAULT_PLAYBOOKS = {
-    "restore_db_pool.yml": {
-        "description": "Restore database connection pool to healthy configuration.",
-        "match_keywords": ["db", "pool", "connection", "database"],
-        "result": {
-            "status": "success",
-            "message": "Database connection pool restored from 50 to 200.",
-            "changes": {"max_connections": "50 -> 200"},
-        },
-        "remediates": {
-            "service": "order-service",
-            "metrics": {
-                "db_connections": {"min": 20, "max": 60},
-                "response_time": {"min": 50, "max": 250},
-            },
-        },
-    },
-    "clean_disk_space.yml": {
-        "description": "Clean temporary files and reclaim disk space.",
-        "match_keywords": ["disk", "clean", "space", "storage"],
-        "result": {
-            "status": "success",
-            "message": "Cleaned 15GB temp files, /data usage from 98% to 73%.",
-            "changes": {"freed_space": "15GB"},
-        },
-        "remediates": {
-            "service": "file-service",
-            "metrics": {
-                "disk_usage": {"min": 40, "max": 75},
-                "io_wait": {"min": 1, "max": 8},
-            },
-        },
-    },
-    "restart_service.yml": {
-        "description": "Restart a service and recover network connections.",
-        "match_keywords": ["restart", "service", "reboot", "recover"],
-        "result": {
-            "status": "success",
-            "message": "payment-service restarted, network connection recovered.",
-            "changes": {"service_state": "restarted"},
-        },
-        "remediates": {
-            "service": "payment-service",
-            "metrics": {
-                "packet_loss": {"min": 0, "max": 2},
-                "latency": {"min": 5, "max": 50},
-            },
-        },
-    },
-}
-
-
 def _load_playbooks():
-    """Load playbook definitions from the fixture file, falling back to defaults."""
+    """Load playbook definitions from the fixture file."""
     fixture_path = os.path.join(
         os.path.dirname(os.path.abspath(__file__)), "..", "fixtures", "playbooks.json"
     )
-    try:
-        with open(fixture_path, "r", encoding="utf-8") as fh:
-            data = json.load(fh)
-            logger.info("Loaded playbook definitions from %s", fixture_path)
-            return data
-    except FileNotFoundError:
-        logger.warning(
-            "Fixture file %s not found – using built-in defaults", fixture_path
-        )
-        return _DEFAULT_PLAYBOOKS
+    if not os.path.exists(fixture_path):
+        raise FileNotFoundError(f"Fixture file {fixture_path} not found")
+    with open(fixture_path, "r", encoding="utf-8") as fh:
+        data = json.load(fh)
+        logger.info("Loaded playbook definitions from %s", fixture_path)
+        return data
 
 
 # Playbook catalogue (loaded once at startup)
@@ -176,6 +117,10 @@ def _notify_remediation(playbook_name: str, remediation: dict):
 # Routes
 # ---------------------------------------------------------------------------
 
+@app.route("/health", methods=["GET"], strict_slashes=False)
+def health():
+    return jsonify({"status": "ok", "service": "mock-ansible"})
+
 @app.route("/api/v1/execute", methods=["GET", "POST", "PUT"], strict_slashes=False)
 def execute_playbook():
     """Execute a playbook by fuzzy-matching the caller's intent."""
@@ -208,7 +153,7 @@ def execute_playbook():
     execution_logs.append(log_entry)
 
     # Simulate execution latency
-    time.sleep(1)
+    time.sleep(float(os.environ.get('MOCK_LATENCY', '1')))
 
     if playbook == "unknown":
         result = {

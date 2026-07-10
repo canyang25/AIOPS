@@ -42,80 +42,7 @@ DIFY_API_BASE = os.getenv("DIFY_API_BASE", "http://localhost/v1")
 DIFY_WORKFLOW_API_KEY = os.getenv("DIFY_WORKFLOW_API_KEY", "")
 WORKFLOW_URL = f"{DIFY_API_BASE.rstrip('/')}/workflows/run"
 
-# Hardcoded default scenarios used as a fallback when scenarios.json is missing.
-_DEFAULT_SCENARIOS = {
-    "db": {
-        "alert_id": "ALERT-DB-001",
-        "service": "order-service",
-        "severity": "critical",
-        "description": "Order API latency increased from 200ms to 1.5s, user complaints rising.",
-        "timestamp": "2025-06-04T14:00:00Z",
-        "metrics": "response_time, db_connections",
-        "expected_root_cause": "Database connection pool misconfiguration",
-        "expected_remediation": "restore_db_pool.yml (max_connections 50 -> 200)",
-    },
-    "disk": {
-        "alert_id": "ALERT-DISK-001",
-        "service": "file-service",
-        "severity": "high",
-        "description": "/data partition usage reached 98%, service unavailable.",
-        "timestamp": "2025-06-04T10:30:00Z",
-        "metrics": "disk_usage, io_wait",
-        "expected_root_cause": "Disk space exhausted",
-        "expected_remediation": "clean_disk_space.yml (free ~15GB of temp files)",
-    },
-    "network": {
-        "alert_id": "ALERT-NET-001",
-        "service": "payment-service",
-        "severity": "critical",
-        "description": "Payment service network abnormal, failure rate increased.",
-        "timestamp": "2025-06-04T16:45:00Z",
-        "metrics": "packet_loss, latency",
-        "expected_root_cause": "Network partition fault",
-        "expected_remediation": "restart_service.yml (restart payment-service)",
-    },
-}
-
-
-def _load_scenarios() -> dict:
-    """Load scenarios from scenarios.json if it exists, otherwise fall back to _DEFAULT_SCENARIOS.
-
-    When loading from JSON, ``timestamp_offset_minutes`` is converted to a
-    dynamic ISO 8601 timestamp relative to *now*.  If the field is absent the
-    original fixed timestamp from the defaults is used instead.
-    """
-    json_path = Path(__file__).resolve().parent / "scenarios.json"
-    if not json_path.is_file():
-        logger.info("scenarios.json not found; using built-in default scenarios.")
-        return _DEFAULT_SCENARIOS
-
-    try:
-        with open(json_path, "r", encoding="utf-8") as fh:
-            raw: dict = json.load(fh)
-    except (json.JSONDecodeError, OSError) as exc:
-        logger.warning("Failed to load scenarios.json (%s); falling back to defaults.", exc)
-        return _DEFAULT_SCENARIOS
-
-    now = datetime.now(timezone.utc)
-    scenarios: dict = {}
-    for name, data in raw.items():
-        scenario = dict(data)  # shallow copy so we don't mutate the parsed JSON
-        offset = scenario.pop("timestamp_offset_minutes", None)
-        if offset is not None:
-            ts = now + timedelta(minutes=offset)
-            scenario["timestamp"] = ts.strftime("%Y-%m-%dT%H:%M:%SZ")
-        elif "timestamp" not in scenario:
-            # No offset and no fixed timestamp -- use the default if available.
-            default = _DEFAULT_SCENARIOS.get(name, {})
-            scenario["timestamp"] = default.get("timestamp", now.strftime("%Y-%m-%dT%H:%M:%SZ"))
-        scenarios[name] = scenario
-
-    logger.info("Loaded %d scenario(s) from %s.", len(scenarios), json_path)
-    return scenarios
-
-
-# Module-level scenarios dict so ``from trigger_fault import SCENARIOS`` works.
-SCENARIOS = _load_scenarios()
+from scenarios import SCENARIOS
 
 
 def send_to_dify(scenario_name: str) -> int:
@@ -182,7 +109,7 @@ def simulate(scenario_name: str) -> int:
     for i, step in enumerate(steps, 1):
         logger.info("  %d. %s", i, step)
 
-    logger.info("Run the real loop by pointing DIFY_* env vars at a live Dify workflow.")
+    logger.info("Run the real loop via agent.py instead of trigger_fault.py.")
     return 0
 
 

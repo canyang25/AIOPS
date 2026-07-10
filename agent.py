@@ -10,6 +10,7 @@ Works with any of these LLM backends (see .env.example):
     Ollama     fully local, no key at all   -- set LLM_PROVIDER=ollama
     Anthropic  Claude                       -- set ANTHROPIC_API_KEY
     OpenAI     or any OpenAI-compatible API  -- set OPENAI_API_KEY (+ OPENAI_BASE_URL)
+    Gemini     Google Gemini                -- set GEMINI_API_KEY
 
 With no backend configured it falls back to an offline --simulate walkthrough,
 so it never hard-fails.
@@ -35,9 +36,10 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# Reuse the scenario catalog and offline walkthrough from the trigger script.
+# Reuse the offline walkthrough from the trigger script.
 # Importing is safe: trigger_fault's CLI only runs under its own __main__ guard.
-from trigger_fault import SCENARIOS, simulate
+from scenarios import SCENARIOS
+from trigger_fault import simulate
 
 try:
     from dotenv import load_dotenv
@@ -77,8 +79,8 @@ TOOLS = [
         "input_schema": {
             "type": "object",
             "properties": {
-                "service": {"type": "string", "description": "e.g. order-service, file-service, payment-service"},
-                "metric": {"type": "string", "description": "e.g. response_time, db_connections, disk_usage, io_wait, packet_loss, latency"},
+                "service": {"type": "string", "description": "The name of the service to query."},
+                "metric": {"type": "string", "description": "The name of the metric to query."},
             },
             "required": ["service", "metric"],
         },
@@ -101,7 +103,7 @@ TOOLS = [
         "input_schema": {
             "type": "object",
             "properties": {
-                "playbook": {"type": "string", "description": "e.g. restore_db_pool.yml"},
+                "playbook": {"type": "string", "description": "The name of the playbook to run."},
                 "hosts": {"type": "array", "items": {"type": "string"}},
             },
             "required": ["playbook"],
@@ -135,6 +137,7 @@ def _tool_query_metrics(service: str, metric: str) -> dict:
         "max": round(max(nums), 2),
         "avg": round(sum(nums) / len(nums), 2),
         "latest": round(nums[-1], 2),
+        "raw_values": nums,
     }
 
 
@@ -195,6 +198,8 @@ def resolve_backend():
     if not provider:
         if os.getenv("GROQ_API_KEY"):
             provider = "groq"
+        elif os.getenv("GEMINI_API_KEY"):
+            provider = "gemini"
         elif os.getenv("ANTHROPIC_API_KEY"):
             provider = "anthropic"
         elif os.getenv("OPENAI_API_KEY"):
@@ -217,6 +222,12 @@ def resolve_backend():
             return None
         return {"kind": "openai", "base_url": os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1"),
                 "api_key": key, "model": os.getenv("OPENAI_MODEL", "gpt-4o-mini")}
+    if provider == "gemini":
+        key = os.getenv("GEMINI_API_KEY")
+        if not key:
+            return None
+        return {"kind": "openai", "base_url": "https://generativelanguage.googleapis.com/v1beta/openai/",
+                "api_key": key, "model": os.getenv("GEMINI_MODEL", "gemini-2.0-flash")}
     if provider == "anthropic":
         if not os.getenv("ANTHROPIC_API_KEY"):
             return None
@@ -227,8 +238,8 @@ def resolve_backend():
 # --- Agent loops ---------------------------------------------------------------
 
 def _log_tool(name, tool_input, result):
-    logger.debug("  [tool] %s(%s)", name, json.dumps(tool_input))
-    logger.debug("         -> %s", json.dumps(result)[:160])
+    logger.info("  [tool] %s(%s)", name, json.dumps(tool_input))
+    logger.info("         -> %s", json.dumps(result)[:160])
 
 
 def _run_openai_compatible(alert: dict, cfg: dict) -> str:
@@ -263,6 +274,7 @@ def _run_openai_compatible(alert: dict, cfg: dict) -> str:
             result = _dispatch(tc.function.name, args)
             _log_tool(tc.function.name, args, result)
             messages.append({"role": "tool", "tool_call_id": tc.id, "content": json.dumps(result)})
+    logger.warning("Agent hit MAX_ITERATIONS (%d). Exiting loop without final report.", MAX_ITERATIONS)
     return ""
 
 
@@ -285,11 +297,12 @@ def _run_anthropic(alert: dict, cfg: dict) -> str:
                 _log_tool(block.name, block.input, result)
                 tool_results.append({"type": "tool_result", "tool_use_id": block.id, "content": json.dumps(result)})
         messages.append({"role": "user", "content": tool_results})
+    logger.warning("Agent hit MAX_ITERATIONS (%d). Exiting loop without final report.", MAX_ITERATIONS)
     return ""
 
 
-def run_agent(scenario_name: str) -> int:
-    """Run the live tool-use loop. Falls back to simulate() on any failure."""
+def run_agent(scenario_name: str, fallback: bool = False) -> int:
+    """Run the live tool-use loop. Falls back to simulate() on any failure if fallback is True."""
     cfg = resolve_backend()
     if cfg is None:
         logger.info("No LLM backend configured -- running offline simulation instead.")
@@ -309,8 +322,12 @@ def run_agent(scenario_name: str) -> int:
         else:
             report = _run_openai_compatible(alert, cfg)
     except Exception as exc:
-        logger.error("Agent run failed (%s: %s). Falling back to simulation.", type(exc).__name__, exc)
-        return simulate(scenario_name)
+        if fallback:
+            logger.error("Agent run failed (%s: %s). Falling back to simulation.", type(exc).__name__, exc)
+            return simulate(scenario_name)
+        else:
+            logger.error("Agent run failed (%s: %s). Use --fallback to simulate.", type(exc).__name__, exc)
+            raise
 
     if not report:
         logger.info("Agent produced no report (hit iteration limit or empty response).")
@@ -335,6 +352,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("scenario", nargs="?", choices=sorted(SCENARIOS), help="fault scenario to resolve")
     parser.add_argument("--simulate", action="store_true", help="offline walkthrough (no key/server needed)")
+    parser.add_argument("--fallback", action="store_true", help="fallback to simulation on LLM error")
     parser.add_argument("--list", action="store_true", help="list available scenarios and exit")
     args = parser.parse_args()
 
@@ -348,7 +366,7 @@ def main() -> int:
         parser.print_help()
         return 1
 
-    return simulate(args.scenario) if args.simulate else run_agent(args.scenario)
+    return simulate(args.scenario) if args.simulate else run_agent(args.scenario, fallback=args.fallback)
 
 
 if __name__ == "__main__":

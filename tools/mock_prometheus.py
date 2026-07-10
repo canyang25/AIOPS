@@ -20,42 +20,17 @@ logger = logging.getLogger(__name__)
 
 app = Flask(__name__)
 
-# ---------------------------------------------------------------------------
-# Default metric definitions (fallback when fixture file is absent)
-# ---------------------------------------------------------------------------
-_DEFAULT_METRICS = {
-    "order-service": {
-        "cpu_usage": {"min": 20, "max": 95, "points": 60},
-        "memory_usage": {"min": 30, "max": 85, "points": 60},
-        "db_connections": {"min": 150, "max": 200, "points": 60, "type": "int"},
-        "response_time": {"min": 50, "max": 1500, "points": 60},
-    },
-    "file-service": {
-        "disk_usage": {"min": 85, "max": 99, "points": 60},
-        "io_wait": {"min": 5, "max": 50, "points": 60},
-    },
-    "payment-service": {
-        "packet_loss": {"min": 0, "max": 50, "points": 60},
-        "latency": {"min": 10, "max": 1200, "points": 60},
-    },
-}
-
-
 def _load_metrics():
-    """Load metric definitions from the fixture file, falling back to defaults."""
+    """Load metric definitions from the fixture file."""
     fixture_path = os.path.join(
         os.path.dirname(os.path.abspath(__file__)), "..", "fixtures", "metrics.json"
     )
-    try:
-        with open(fixture_path, "r", encoding="utf-8") as fh:
-            data = json.load(fh)
-            logger.info("Loaded metric definitions from %s", fixture_path)
-            return data
-    except FileNotFoundError:
-        logger.warning(
-            "Fixture file %s not found – using built-in defaults", fixture_path
-        )
-        return _DEFAULT_METRICS
+    if not os.path.exists(fixture_path):
+        raise FileNotFoundError(f"Fixture file {fixture_path} not found")
+    with open(fixture_path, "r", encoding="utf-8") as fh:
+        data = json.load(fh)
+        logger.info("Loaded metric definitions from %s", fixture_path)
+        return data
 
 
 # Metric definitions (loaded once at import / startup)
@@ -78,6 +53,10 @@ def _generate_value(spec: dict) -> float:
 # ---------------------------------------------------------------------------
 # Routes
 # ---------------------------------------------------------------------------
+
+@app.route("/health", methods=["GET"], strict_slashes=False)
+def health():
+    return jsonify({"status": "ok", "service": "mock-prometheus"})
 
 # Main query route – disable strict slashes for Dify compatibility
 @app.route("/api/v1/query_range", methods=["GET", "POST"], strict_slashes=False)
