@@ -1,0 +1,601 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>AutoSRE — Autonomous LLM-Powered Site Reliability Engineer</title>
+  <meta name="description" content="AutoSRE is an autonomous, LLM-powered SRE agent. Give it a production alert and it investigates, diagnoses, remediates, and writes the incident report — automatically." />
+  <meta property="og:title" content="AutoSRE — Autonomous LLM-Powered SRE" />
+  <meta property="og:description" content="Give it a production alert. It investigates, diagnoses, remediates, and reports — no human required." />
+  <meta name="theme-color" content="#00d4aa" />
+
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css" />
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+
+<!-- ══════════════════════════════════════════════════════
+     NAV
+══════════════════════════════════════════════════════ -->
+<nav id="nav">
+  <div class="container nav-inner">
+    <div class="nav-logo">Auto<span>SRE</span></div>
+
+    <ul class="nav-links">
+      <li><a href="#how-it-works" data-section="how-it-works">How it works</a></li>
+      <li><a href="#features"     data-section="features">Features</a></li>
+      <li><a href="#scenarios"    data-section="scenarios">Scenarios</a></li>
+      <li><a href="#quickstart"   data-section="quickstart">Quickstart</a></li>
+      <li><a href="#backends"     data-section="backends">Backends</a></li>
+    </ul>
+
+    <a href="https://github.com/canyang25/AIOPS" target="_blank" class="nav-cta">
+      GitHub ↗
+    </a>
+
+    <button class="hamburger" id="hamburger" aria-label="Toggle menu">
+      <span></span><span></span><span></span>
+    </button>
+  </div>
+</nav>
+
+<!-- Mobile menu -->
+<div class="mobile-menu" id="mobile-menu">
+  <a href="#how-it-works">How it works</a>
+  <a href="#features">Features</a>
+  <a href="#scenarios">Scenarios</a>
+  <a href="#quickstart">Quickstart</a>
+  <a href="#backends">LLM Backends</a>
+  <a href="https://github.com/canyang25/AIOPS" target="_blank">GitHub ↗</a>
+</div>
+
+<!-- ══════════════════════════════════════════════════════
+     HERO
+══════════════════════════════════════════════════════ -->
+<section id="hero">
+  <div class="orb orb-1"></div>
+  <div class="orb orb-2"></div>
+  <div class="orb orb-3"></div>
+  <div class="hero-grid"></div>
+
+  <div class="container">
+    <div class="hero-layout">
+
+      <!-- Left: copy -->
+      <div class="hero-copy">
+        <div class="hero-badge">
+          <svg class="badge-icon" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+          Open-source · MIT license
+        </div>
+
+        <h1 class="hero-title">
+          Your AI<br />
+          On-Call <span class="gradient-text">SRE</span>
+        </h1>
+
+        <p class="hero-subtitle">
+          Give AutoSRE a production alert. It pulls metrics, reads logs, diagnoses
+          the root cause, runs the fix, and hands you back a written incident
+          report — all autonomously.
+        </p>
+
+        <div class="hero-cta-group">
+          <a href="https://github.com/canyang25/AIOPS" target="_blank" class="btn-primary">
+            <svg width="17" height="17" viewBox="0 0 24 24" fill="currentColor"><path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0 0 24 12c0-6.63-5.37-12-12-12z"/></svg>
+            View on GitHub
+          </a>
+          <a href="#quickstart" class="btn-secondary">
+            <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+            Get started
+          </a>
+        </div>
+
+        <div class="badge-strip">
+          <span class="badge">Python 3.10+</span>
+          <span class="badge">LLM tool-use loop</span>
+          <span class="badge">Groq · Gemini · Ollama</span>
+          <span class="badge">MIT License</span>
+        </div>
+      </div>
+
+      <!-- Right: live terminal -->
+      <div class="terminal-widget">
+        <div class="terminal-titlebar">
+          <div class="terminal-dots">
+            <span></span><span></span><span></span>
+          </div>
+          <span class="terminal-title">autosre — agent.py — zsh</span>
+        </div>
+        <div class="terminal-body" id="terminal-body"></div>
+      </div>
+
+    </div>
+  </div>
+</section>
+
+<!-- ══════════════════════════════════════════════════════
+     STATS
+══════════════════════════════════════════════════════ -->
+<section id="stats">
+  <div class="container">
+    <div class="stats-grid">
+      <div class="stat-item reveal">
+        <div class="stat-num" data-count="5" data-suffix="+">0</div>
+        <div class="stat-label">LLM Providers</div>
+      </div>
+      <div class="stat-item reveal reveal-delay-1">
+        <div class="stat-num" data-count="3">0</div>
+        <div class="stat-label">Demo Scenarios</div>
+      </div>
+      <div class="stat-item reveal reveal-delay-2">
+        <div class="stat-num" data-count="0">–</div>
+        <div class="stat-label">Servers Required</div>
+      </div>
+      <div class="stat-item reveal reveal-delay-3">
+        <div class="stat-num" data-count="4">0</div>
+        <div class="stat-label">Autonomous Steps</div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ══════════════════════════════════════════════════════
+     HOW IT WORKS
+══════════════════════════════════════════════════════ -->
+<section id="how-it-works">
+  <div class="container">
+    <div class="section-header reveal">
+      <span class="section-label">How it works</span>
+      <h2 class="section-title">A closed-loop that runs itself</h2>
+      <p class="section-desc">
+        AutoSRE mimics exactly what an on-call SRE does — check dashboards,
+        read logs, form a hypothesis, apply a fix, verify recovery — all in one autonomous loop.
+      </p>
+    </div>
+
+    <div class="flow-track">
+      <div class="flow-step reveal reveal-delay-1">
+        <div class="flow-icon">
+          <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+        </div>
+        <div>
+          <h3>Fault Alert</h3>
+          <p>A production alert fires — latency spike, disk full, rising error rate.</p>
+        </div>
+      </div>
+
+      <div class="flow-connector reveal reveal-delay-1">
+        <div class="flow-connector-line"></div>
+        <span class="flow-connector-arrow">›</span>
+      </div>
+
+      <div class="flow-step reveal reveal-delay-2">
+        <div class="flow-icon">
+          <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>
+        </div>
+        <div>
+          <h3>Gather Signals</h3>
+          <p>Query time-series metrics (Prometheus) and search error logs (ELK).</p>
+        </div>
+      </div>
+
+      <div class="flow-connector reveal reveal-delay-2">
+        <div class="flow-connector-line"></div>
+        <span class="flow-connector-arrow">›</span>
+      </div>
+
+      <div class="flow-step reveal reveal-delay-3">
+        <div class="flow-icon">
+          <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/><line x1="11" y1="8" x2="11" y2="14"/><line x1="8" y1="11" x2="14" y2="11"/></svg>
+        </div>
+        <div>
+          <h3>Diagnose</h3>
+          <p>The LLM correlates all signals into a root-cause hypothesis.</p>
+        </div>
+      </div>
+
+      <div class="flow-connector reveal reveal-delay-3">
+        <div class="flow-connector-line"></div>
+        <span class="flow-connector-arrow">›</span>
+      </div>
+
+      <div class="flow-step reveal reveal-delay-4">
+        <div class="flow-icon">
+          <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M14.7 6.3a1 1 0 000 1.4l1.6 1.6a1 1 0 001.4 0l3.77-3.77a6 6 0 01-7.94 7.94l-6.91 6.91a2.12 2.12 0 01-3-3l6.91-6.91a6 6 0 017.94-7.94l-3.76 3.76z"/></svg>
+        </div>
+        <div>
+          <h3>Remediate</h3>
+          <p>Pick and execute the matching Ansible playbook to fix the issue.</p>
+        </div>
+      </div>
+
+      <div class="flow-connector reveal reveal-delay-4">
+        <div class="flow-connector-line"></div>
+        <span class="flow-connector-arrow">›</span>
+      </div>
+
+      <div class="flow-step reveal reveal-delay-4">
+        <div class="flow-icon">
+          <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>
+        </div>
+        <div>
+          <h3>Report</h3>
+          <p>Confirm recovery and emit a structured incident report in Markdown.</p>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ══════════════════════════════════════════════════════
+     FEATURES
+══════════════════════════════════════════════════════ -->
+<section id="features">
+  <div class="container">
+    <div class="section-header reveal">
+      <span class="section-label">Features</span>
+      <h2 class="section-title">Why AutoSRE?</h2>
+      <p class="section-desc">
+        Designed as a reference implementation — clean, hackable, and built
+        to show exactly how autonomous AIOps agents work.
+      </p>
+    </div>
+
+    <div class="features-grid">
+
+      <div class="feature-card reveal reveal-delay-1">
+        <div class="feature-icon">
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
+        </div>
+        <h3>Backend-agnostic LLM loop</h3>
+        <p>Uses a single OpenAI-compatible tool-use loop. Swap providers by changing one line in <code class="inline">.env</code>. Works with Groq, Gemini, Ollama, Anthropic, or any OpenAI-compatible endpoint.</p>
+      </div>
+
+      <div class="feature-card reveal reveal-delay-2">
+        <div class="feature-icon">
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="2" y="3" width="20" height="14" rx="2" ry="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
+        </div>
+        <h3>Runs on your laptop — no infra needed</h3>
+        <p>Prometheus, ELK, and Ansible are provided as lightweight Flask mocks. The entire stack starts in seconds with a single shell script and zero Docker required.</p>
+      </div>
+
+      <div class="feature-card reveal reveal-delay-3">
+        <div class="feature-icon">
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><polyline points="9 11 12 14 22 4"/><path d="M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11"/></svg>
+        </div>
+        <h3>Verifiable reasoning</h3>
+        <p>Each scenario ships with a known ground-truth root cause. You can check the agent's diagnosis against the expected answer to verify it reasoned correctly — not just got lucky.</p>
+      </div>
+
+      <div class="feature-card reveal reveal-delay-4">
+        <div class="feature-icon">
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M18 13v6a2 2 0 01-2 2H5a2 2 0 01-2-2V8a2 2 0 012-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>
+        </div>
+        <h3>Plug in real infrastructure</h3>
+        <p>The mock services follow the same API contracts as real Prometheus, Elasticsearch, and Ansible. Point to your actual endpoints and the agent's reasoning loop works unchanged.</p>
+      </div>
+
+    </div>
+  </div>
+</section>
+
+<!-- ══════════════════════════════════════════════════════
+     SCENARIOS
+══════════════════════════════════════════════════════ -->
+<section id="scenarios">
+  <div class="container">
+    <div class="section-header reveal">
+      <span class="section-label">Built-in Scenarios</span>
+      <h2 class="section-title">Three faults, one command each</h2>
+      <p class="section-desc">
+        Each scenario ships with a known ground-truth root cause so you can
+        verify the agent's reasoning is correct, not just fast.
+      </p>
+    </div>
+
+    <div class="scenario-grid">
+
+      <div class="scenario-card reveal reveal-delay-1">
+        <div class="scenario-tag">python agent.py db</div>
+        <h3>Database Pool Exhaustion</h3>
+        <div class="scenario-detail">
+          <div class="detail-row">
+            <span class="detail-label">Service</span>
+            <span class="detail-value">order-service</span>
+          </div>
+          <div class="detail-row">
+            <span class="detail-label">Symptom</span>
+            <span class="detail-value">API latency spikes from 200ms → 1.5s</span>
+          </div>
+          <div class="detail-row">
+            <span class="detail-label">Root cause</span>
+            <span class="detail-value">DB connection pool misconfigured — max connections exhausted</span>
+          </div>
+          <div class="detail-row">
+            <span class="detail-label">Playbook</span>
+            <span class="detail-code">restore_db_pool.yml</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="scenario-card reveal reveal-delay-2">
+        <div class="scenario-tag">python agent.py disk</div>
+        <h3>Disk Space Exhausted</h3>
+        <div class="scenario-detail">
+          <div class="detail-row">
+            <span class="detail-label">Service</span>
+            <span class="detail-value">file-service</span>
+          </div>
+          <div class="detail-row">
+            <span class="detail-label">Symptom</span>
+            <span class="detail-value"><code>/data</code> partition at 98% — write failures</span>
+          </div>
+          <div class="detail-row">
+            <span class="detail-label">Root cause</span>
+            <span class="detail-value">Log rotation disabled — disk filled with unrotated logs</span>
+          </div>
+          <div class="detail-row">
+            <span class="detail-label">Playbook</span>
+            <span class="detail-code">clean_disk_space.yml</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="scenario-card reveal reveal-delay-3">
+        <div class="scenario-tag">python agent.py network</div>
+        <h3>Network Partition</h3>
+        <div class="scenario-detail">
+          <div class="detail-row">
+            <span class="detail-label">Service</span>
+            <span class="detail-value">payment-service</span>
+          </div>
+          <div class="detail-row">
+            <span class="detail-label">Symptom</span>
+            <span class="detail-value">Rising payment failure rate — timeout errors</span>
+          </div>
+          <div class="detail-row">
+            <span class="detail-label">Root cause</span>
+            <span class="detail-value">Network partition between payment-service and upstream gateway</span>
+          </div>
+          <div class="detail-row">
+            <span class="detail-label">Playbook</span>
+            <span class="detail-code">restart_service.yml</span>
+          </div>
+        </div>
+      </div>
+
+    </div>
+  </div>
+</section>
+
+<!-- ══════════════════════════════════════════════════════
+     QUICKSTART
+══════════════════════════════════════════════════════ -->
+<section id="quickstart">
+  <div class="container">
+    <div class="section-header reveal">
+      <span class="section-label">Quickstart</span>
+      <h2 class="section-title">Up and running in 4 steps</h2>
+      <p class="section-desc">
+        No Docker required. Everything runs on plain Python and your
+        choice of LLM provider — including completely free options.
+      </p>
+    </div>
+
+    <div class="quickstart-steps">
+
+      <div class="qs-step reveal">
+        <div class="step-num">1</div>
+        <div class="step-body">
+          <h3>Clone and install dependencies</h3>
+          <p>Clone the repo and install the Python requirements.</p>
+          <div class="code-block">
+            <div class="code-header">
+              <div class="code-dots"><span></span><span></span><span></span></div>
+              <span class="code-lang">bash</span>
+              <button class="copy-btn"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg> Copy</button>
+            </div>
+            <pre><code class="language-bash">git clone https://github.com/canyang25/AIOPS.git
+cd AIOPS
+pip install -r requirements.txt</code></pre>
+          </div>
+        </div>
+      </div>
+
+      <div class="qs-step reveal">
+        <div class="step-num">2</div>
+        <div class="step-body">
+          <h3>Configure your LLM provider</h3>
+          <p>Copy the example config and uncomment one provider. <strong>Groq is free with no credit card required</strong> — the fastest way to get started.</p>
+          <div class="code-block">
+            <div class="code-header">
+              <div class="code-dots"><span></span><span></span><span></span></div>
+              <span class="code-lang">bash</span>
+              <button class="copy-btn"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2 2v1"/></svg> Copy</button>
+            </div>
+            <pre><code class="language-bash">cp .env.example .env
+# Open .env and set your key — e.g.:
+# GROQ_API_KEY=gsk_...    (free, no credit card)
+# GEMINI_API_KEY=...       (free tier)
+# LLM_PROVIDER=ollama      (fully local)</code></pre>
+          </div>
+        </div>
+      </div>
+
+      <div class="qs-step reveal">
+        <div class="step-num">3</div>
+        <div class="step-body">
+          <h3>Start the mock backends</h3>
+          <p>Spin up lightweight Flask mocks for Prometheus, ELK, and Ansible — pure Python, no Docker needed.</p>
+          <div class="code-block">
+            <div class="code-header">
+              <div class="code-dots"><span></span><span></span><span></span></div>
+              <span class="code-lang">bash</span>
+              <button class="copy-btn"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2 2v1"/></svg> Copy</button>
+            </div>
+            <pre><code class="language-bash">./start_services.sh
+
+# Mock Prometheus  →  http://localhost:9091
+# Mock Ansible     →  http://localhost:9092
+# Mock ELK         →  http://localhost:9093</code></pre>
+          </div>
+        </div>
+      </div>
+
+      <div class="qs-step reveal">
+        <div class="step-num">4</div>
+        <div class="step-body">
+          <h3>Run the agent</h3>
+          <p>Pick any scenario and watch AutoSRE investigate, remediate, and write the report.</p>
+          <div class="code-block">
+            <div class="code-header">
+              <div class="code-dots"><span></span><span></span><span></span></div>
+              <span class="code-lang">bash</span>
+              <button class="copy-btn"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2 2v1"/></svg> Copy</button>
+            </div>
+            <pre><code class="language-bash">python agent.py db        # DB pool exhaustion
+python agent.py disk      # Disk full
+python agent.py network   # Network partition
+python agent.py --list    # List all scenarios
+
+# No API key? Run the offline simulation:
+python agent.py db --simulate</code></pre>
+          </div>
+        </div>
+      </div>
+
+    </div>
+  </div>
+</section>
+
+<!-- ══════════════════════════════════════════════════════
+     LLM BACKENDS
+══════════════════════════════════════════════════════ -->
+<section id="backends">
+  <div class="container">
+    <div class="section-header reveal">
+      <span class="section-label">LLM Backends</span>
+      <h2 class="section-title">Works with any major provider</h2>
+      <p class="section-desc">
+        AutoSRE uses an OpenAI-compatible tool-use loop — swap the backend
+        with a single line in <code class="inline">.env</code>. Three options run completely free.
+      </p>
+    </div>
+
+    <div class="backends-table-wrap reveal">
+      <table>
+        <thead>
+          <tr>
+            <th>Provider</th>
+            <th>Cost</th>
+            <th>Config</th>
+            <th>Notes</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td class="backend-name">Groq</td>
+            <td><span class="cost-badge cost-free">Free</span></td>
+            <td><code class="inline">GROQ_API_KEY=gsk_...</code></td>
+            <td>No credit card · fastest option</td>
+          </tr>
+          <tr>
+            <td class="backend-name">Gemini</td>
+            <td><span class="cost-badge cost-free">Free tier</span></td>
+            <td><code class="inline">GEMINI_API_KEY=...</code></td>
+            <td>Google's models · generous quota</td>
+          </tr>
+          <tr>
+            <td class="backend-name">Ollama</td>
+            <td><span class="cost-badge cost-local">Local / Free</span></td>
+            <td><code class="inline">LLM_PROVIDER=ollama</code></td>
+            <td>100% local · fully private · no internet</td>
+          </tr>
+          <tr>
+            <td class="backend-name">Anthropic</td>
+            <td><span class="cost-badge cost-paid">Paid</span></td>
+            <td><code class="inline">ANTHROPIC_API_KEY=sk-ant-...</code></td>
+            <td>Claude — strongest reasoning</td>
+          </tr>
+          <tr>
+            <td class="backend-name">OpenAI</td>
+            <td><span class="cost-badge cost-paid">Paid</span></td>
+            <td><code class="inline">OPENAI_API_KEY=sk-...</code></td>
+            <td>GPT-4o · any OpenAI-compatible endpoint</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+</section>
+
+<!-- ══════════════════════════════════════════════════════
+     REAL INFRA
+══════════════════════════════════════════════════════ -->
+<section id="real-infra">
+  <div class="container">
+    <div class="section-header reveal">
+      <span class="section-label">Production-ready</span>
+      <h2 class="section-title">Connect to real infrastructure</h2>
+      <p class="section-desc">
+        The mock services follow the same API contracts as the real tools.
+        Swap the URLs and the agent's reasoning loop works unchanged.
+      </p>
+    </div>
+
+    <div class="infra-grid">
+      <div class="infra-card reveal reveal-delay-1">
+        <div class="infra-icon">
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>
+        </div>
+        <h3>Real Prometheus</h3>
+        <p>Point to your actual Prometheus instance. The agent queries the same PromQL endpoints it uses against the mock.</p>
+        <div class="infra-env">
+          <code class="inline">PROMETHEUS_URL=http://your-prometheus:9090</code>
+        </div>
+      </div>
+
+      <div class="infra-card reveal reveal-delay-2">
+        <div class="infra-icon">
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+        </div>
+        <h3>Real Elasticsearch / ELK</h3>
+        <p>Replace the mock ELK with your Elasticsearch cluster. Same search API shape — just update the URL and add auth headers if needed.</p>
+        <div class="infra-env">
+          <code class="inline">ELK_URL=http://your-elastic:9200</code>
+        </div>
+      </div>
+
+      <div class="infra-card reveal reveal-delay-3">
+        <div class="infra-icon">
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="3"/><path d="M19.07 4.93a10 10 0 010 14.14M4.93 4.93a10 10 0 000 14.14"/></svg>
+        </div>
+        <h3>Real Ansible</h3>
+        <p>Swap the mock Ansible API for your AWX/Tower instance or a custom webhook. The remediation step calls the same REST endpoint.</p>
+        <div class="infra-env">
+          <code class="inline">ANSIBLE_URL=http://your-awx:8080</code>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ══════════════════════════════════════════════════════
+     FOOTER
+══════════════════════════════════════════════════════ -->
+<footer>
+  <div class="container footer-inner">
+    <div class="footer-logo">Auto<span>SRE</span></div>
+    <p class="footer-meta">Released under the <strong>MIT License</strong> · Built by canyang25</p>
+    <div class="footer-links">
+      <a href="https://github.com/canyang25/AIOPS" target="_blank">GitHub ↗</a>
+      <a href="https://github.com/canyang25/AIOPS/blob/main/README.md" target="_blank">Docs ↗</a>
+      <a href="https://github.com/canyang25/AIOPS/blob/main/LICENSE" target="_blank">License ↗</a>
+    </div>
+  </div>
+</footer>
+
+<script src="script.js"></script>
+</body>
+</html>
