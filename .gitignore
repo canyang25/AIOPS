@@ -16,13 +16,17 @@ data/
 logs/
 .pids/
 docker-compose-mock.yml
+reports/
+
+# Generated cache
+.pytest_cache/
 
 # OS / editor
 .DS_Store
 .idea/
 .vscode/
 
-# Generated reports
-reports/
+# Local dev tools
+.claude/
 
 # Fixtures are tracked (do NOT ignore)
