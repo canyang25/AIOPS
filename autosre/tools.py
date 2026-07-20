@@ -1,17 +1,20 @@
-"""Tool definitions and HTTP wrappers for mock / real observability backends."""
+"""Tool definitions and thin dispatch over backend adapters + policy gate."""
 
 from __future__ import annotations
 
 import logging
 import time
-from datetime import datetime, timedelta, timezone
-from typing import Any, Optional
+from typing import Optional
 
-import requests
-
+from autosre import audit
 from autosre.approval import ApprovalGate
+from autosre.backends import ansible as ansible_backend
+from autosre.backends import logs as logs_backend
+from autosre.backends import metrics as metrics_backend
 from autosre.config import AutoSREConfig
 from autosre.logging import log_extra
+from autosre.metrics_self import METRICS
+from autosre.policy import evaluate_remediation
 from autosre.retry import retry_http
 
 logger = logging.getLogger(__name__)
@@ -76,183 +79,28 @@ def _cfg(cfg: Optional[AutoSREConfig] = None) -> AutoSREConfig:
     return cfg or AutoSREConfig.from_env()
 
 
-def _headers(cfg: AutoSREConfig) -> dict[str, str]:
-    return cfg.request_headers()
-
-
-def _summarize_values(service: str, metric: str, nums: list[float]) -> dict:
-    return {
-        "service": service,
-        "metric": metric,
-        "points": len(nums),
-        "min": round(min(nums), 2),
-        "max": round(max(nums), 2),
-        "avg": round(sum(nums) / len(nums), 2),
-        "latest": round(nums[-1], 2),
-        "raw_values": nums,
-    }
-
-
 @retry_http
 def _tool_query_metrics(service: str, metric: str, cfg: Optional[AutoSREConfig] = None) -> dict:
-    c = _cfg(cfg)
-    headers = _headers(c)
-
-    if c.backend_mode == "real":
-        # Real Prometheus: PromQL query_range (query/start/end/step).
-        end = datetime.now(timezone.utc)
-        start = end - timedelta(minutes=15)
-        query = c.prometheus_query_template.format(metric=metric, service=service)
-        resp = requests.get(
-            f"{c.prometheus_url}/api/v1/query_range",
-            params={
-                "query": query,
-                "start": start.timestamp(),
-                "end": end.timestamp(),
-                "step": 60,
-            },
-            headers=headers,
-            timeout=15,
-        )
-        resp.raise_for_status()
-        result = resp.json()["data"]["result"]
-        if not result:
-            raise ValueError(f"no series for query={query!r}")
-        values = result[0]["values"]
-        nums = [float(v) for _, v in values]
-        return _summarize_values(service, metric, nums)
-
-    # Mock contract: service + metric query params.
-    resp = requests.get(
-        f"{c.prometheus_url}/api/v1/query_range",
-        params={"service": service, "metric": metric},
-        headers=headers,
-        timeout=15,
-    )
-    resp.raise_for_status()
-    values = resp.json()["data"]["result"][0]["values"]
-    nums = [float(v) for _, v in values]
-    return _summarize_values(service, metric, nums)
+    return metrics_backend.query_metrics(service, metric, cfg=_cfg(cfg))
 
 
 @retry_http
 def _tool_search_logs(
     service: str, level: str = None, cfg: Optional[AutoSREConfig] = None
 ) -> dict:
-    c = _cfg(cfg)
-    headers = _headers(c)
-
-    if c.backend_mode == "real":
-        # Elasticsearch Query DSL against a configured index.
-        must: list[dict[str, Any]] = [{"term": {"service.keyword": service}}]
-        if level:
-            must.append({"term": {"level.keyword": level}})
-        body = {"query": {"bool": {"must": must}}, "size": 20}
-        resp = requests.post(
-            f"{c.elk_url}/{c.elk_index}/_search",
-            json=body,
-            headers=headers,
-            timeout=15,
-        )
-        resp.raise_for_status()
-        hits = resp.json()["hits"]
-        total = hits["total"]["value"] if isinstance(hits["total"], dict) else hits["total"]
-        return {
-            "service": service,
-            "level": level,
-            "total": total,
-            "logs": [h["_source"] for h in hits["hits"]],
-        }
-
-    query: dict[str, Any] = {"service": service}
-    if level:
-        query["level"] = level
-    resp = requests.post(
-        f"{c.elk_url}/_search",
-        json={"query": query},
-        headers=headers,
-        timeout=15,
-    )
-    resp.raise_for_status()
-    hits = resp.json()["hits"]
-    return {
-        "service": service,
-        "level": level,
-        "total": hits["total"]["value"],
-        "logs": [h["_source"] for h in hits["hits"]],
-    }
+    return logs_backend.search_logs(service, level, cfg=_cfg(cfg))
 
 
 @retry_http
 def _tool_run_playbook(
     playbook: str, hosts: list = None, cfg: Optional[AutoSREConfig] = None
 ) -> dict:
-    c = _cfg(cfg)
-    headers = _headers(c)
-    hosts = hosts or ["localhost"]
-
-    if c.backend_mode == "real":
-        # AWX / Automation Controller job template launch.
-        template_id = c.awx_job_template_map.get(playbook)
-        if not template_id:
-            raise KeyError(
-                f"no AWX job template mapped for playbook {playbook!r}; "
-                "set AWX_JOB_TEMPLATE_MAP_JSON"
-            )
-        resp = requests.post(
-            f"{c.ansible_url}/api/v2/job_templates/{template_id}/launch/",
-            json={"limit": ",".join(hosts)},
-            headers={**headers, "Content-Type": "application/json"},
-            timeout=30,
-        )
-        resp.raise_for_status()
-        body = resp.json()
-        return {
-            "status": "success" if resp.status_code in (200, 201) else "unknown",
-            "playbook": playbook,
-            "job": body.get("job") or body.get("id"),
-            "raw": body,
-        }
-
-    resp = requests.post(
-        f"{c.ansible_url}/api/v1/execute",
-        json={"playbook": playbook, "hosts": hosts},
-        headers=headers,
-        timeout=15,
-    )
-    resp.raise_for_status()
-    return resp.json()
+    return ansible_backend.run_playbook(playbook, hosts, cfg=_cfg(cfg))
 
 
 @retry_http
 def _tool_list_playbooks(cfg: Optional[AutoSREConfig] = None) -> dict:
-    c = _cfg(cfg)
-    headers = _headers(c)
-
-    if c.backend_mode == "real":
-        resp = requests.get(
-            f"{c.ansible_url}/api/v2/job_templates/",
-            headers=headers,
-            timeout=15,
-        )
-        resp.raise_for_status()
-        results = resp.json().get("results", [])
-        playbooks = {
-            item.get("name", str(item.get("id"))): {
-                "description": item.get("description", ""),
-                "id": item.get("id"),
-            }
-            for item in results
-        }
-        return {"playbooks": playbooks}
-
-    resp = requests.get(
-        f"{c.ansible_url}/api/v1/playbooks",
-        headers=headers,
-        timeout=15,
-    )
-    resp.raise_for_status()
-    return resp.json()
+    return ansible_backend.list_playbooks(cfg=_cfg(cfg))
 
 
 TOOL_DISPATCH = {
@@ -269,7 +117,7 @@ def _dispatch(
     cfg: Optional[AutoSREConfig] = None,
     approval: Optional[ApprovalGate] = None,
 ) -> dict:
-    """Dispatch a tool call, gating run_playbook behind the approval gate."""
+    """Dispatch a tool call through policy + approval gates for remediations."""
     start = time.monotonic()
     runtime_cfg = _cfg(cfg)
     try:
@@ -277,11 +125,48 @@ def _dispatch(
             raise KeyError(f"unknown tool: {name}")
 
         if name == "run_playbook":
-            gate = approval or ApprovalGate(runtime_cfg)
             playbook = tool_input.get("playbook", "")
             hosts = tool_input.get("hosts") or ["localhost"]
+
+            decision = evaluate_remediation(playbook, hosts, runtime_cfg)
+            if not decision.allowed:
+                METRICS.incr("remediations_blocked")
+                audit.write_event(
+                    "remediation_denied_policy",
+                    {
+                        "playbook": playbook,
+                        "hosts": hosts,
+                        "reason": decision.reason,
+                        "blast_hosts": decision.blast_hosts,
+                    },
+                    path=runtime_cfg.audit_log_path,
+                )
+                return {
+                    "error": f"Remediation denied by policy: {decision.reason}",
+                    "denied": True,
+                    "policy": decision.reason,
+                }
+
+            gate = approval or ApprovalGate(runtime_cfg)
             if not gate.request_approval(playbook, hosts, context=tool_input):
+                METRICS.incr("remediations_blocked")
+                audit.write_event(
+                    "remediation_denied_operator",
+                    {"playbook": playbook, "hosts": hosts},
+                    path=runtime_cfg.audit_log_path,
+                )
                 return {"error": "Remediation denied by operator", "denied": True}
+
+            METRICS.incr("remediations_allowed")
+            audit.write_event(
+                "remediation_allowed",
+                {
+                    "playbook": playbook,
+                    "hosts": hosts,
+                    "blast_hosts": decision.blast_hosts,
+                },
+                path=runtime_cfg.audit_log_path,
+            )
 
         kwargs = dict(tool_input)
         kwargs["cfg"] = runtime_cfg
@@ -292,7 +177,7 @@ def _dispatch(
             extra=log_extra(tool=name, duration_ms=duration_ms),
         )
         return result
-    except Exception as exc:  # surface tool failures to the model instead of crashing
+    except Exception as exc:
         duration_ms = round((time.monotonic() - start) * 1000, 2)
         logger.warning(
             "tool error: %s",

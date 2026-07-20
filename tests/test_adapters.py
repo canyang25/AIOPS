@@ -1,8 +1,4 @@
-"""Tests for HTTP auth headers and real-backend adapters.
-
-Uses SCENARIOS / config — no hardcoded alert IDs or playbook names in asserts
-beyond values read from the catalog or local fixtures.
-"""
+"""Tests for HTTP auth headers and real-backend adapters."""
 
 from unittest.mock import MagicMock, patch
 
@@ -25,7 +21,7 @@ def test_config_request_headers_include_authorization(monkeypatch):
     assert headers["X-Env"] == "test"
 
 
-def test_mock_query_sends_auth_header(monkeypatch):
+def test_mock_query_sends_auth_header():
     _, scenario = _any_scenario()
     metric = scenario["metrics"].split(",")[0].strip()
     service = scenario["service"]
@@ -49,7 +45,7 @@ def test_mock_query_sends_auth_header(monkeypatch):
         }
         return resp
 
-    with patch("autosre.tools.requests.get", side_effect=fake_get):
+    with patch("autosre.backends.http.requests.get", side_effect=fake_get):
         result = _tool_query_metrics(service, metric, cfg=cfg)
 
     assert captured["headers"]["Authorization"] == "Bearer mock-token"
@@ -58,7 +54,7 @@ def test_mock_query_sends_auth_header(monkeypatch):
     assert result["latest"] == 20
 
 
-def test_real_prometheus_uses_promql_params(monkeypatch):
+def test_real_prometheus_uses_promql_params():
     _, scenario = _any_scenario()
     metric = scenario["metrics"].split(",")[0].strip()
     service = scenario["service"]
@@ -82,7 +78,7 @@ def test_real_prometheus_uses_promql_params(monkeypatch):
         }
         return resp
 
-    with patch("autosre.tools.requests.get", side_effect=fake_get):
+    with patch("autosre.backends.http.requests.get", side_effect=fake_get):
         result = _tool_query_metrics(service, metric, cfg=cfg)
 
     assert "query" in captured["params"]
@@ -113,11 +109,12 @@ def test_real_awx_launch_uses_template_map():
         captured["headers"] = headers
         resp = MagicMock()
         resp.status_code = 201
+        resp.content = b"{}"
         resp.raise_for_status = MagicMock()
         resp.json.return_value = {"job": 99, "id": 99}
         return resp
 
-    with patch("autosre.tools.requests.post", side_effect=fake_post):
+    with patch("autosre.backends.http.requests.post", side_effect=fake_post):
         result = _tool_run_playbook(playbook, hosts=["host-a"], cfg=cfg)
 
     assert captured["url"].endswith("/api/v2/job_templates/42/launch/")
@@ -141,13 +138,15 @@ def test_real_elk_uses_index_search():
         captured["json"] = json
         captured["headers"] = headers
         resp = MagicMock()
+        resp.status_code = 200
+        resp.content = b"{}"
         resp.raise_for_status = MagicMock()
         resp.json.return_value = {
             "hits": {"total": {"value": 1}, "hits": [{"_source": {"message": "x"}}]}
         }
         return resp
 
-    with patch("autosre.tools.requests.post", side_effect=fake_post):
+    with patch("autosre.backends.http.requests.post", side_effect=fake_post):
         result = _tool_search_logs(scenario["service"], level="ERROR", cfg=cfg)
 
     assert captured["url"].endswith("/logs-prod/_search")
