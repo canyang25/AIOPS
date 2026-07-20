@@ -7,7 +7,13 @@
     "timestamp_offset_minutes": -60,
     "metrics": "response_time, db_connections",
     "expected_root_cause": "Database connection pool misconfiguration",
-    "expected_remediation": "restore_db_pool.yml (max_connections 50 -> 200)"
+    "expected_remediation": "restore_db_pool.yml (max_connections 50 -> 200)",
+    "healthy_thresholds": {
+      "response_time": {"max": 300},
+      "db_connections": {"max": 80}
+    },
+    "webhook_keywords": ["db", "database", "pool", "connection"],
+    "webhook_labels": {"alertname": "HighLatency"}
   },
   "disk": {
     "alert_id": "ALERT-DISK-001",
@@ -17,7 +23,13 @@
     "timestamp_offset_minutes": -270,
     "metrics": "disk_usage, io_wait",
     "expected_root_cause": "Disk space exhausted",
-    "expected_remediation": "clean_disk_space.yml (free ~15GB of temp files)"
+    "expected_remediation": "clean_disk_space.yml (free ~15GB of temp files)",
+    "healthy_thresholds": {
+      "disk_usage": {"max": 80},
+      "io_wait": {"max": 10}
+    },
+    "webhook_keywords": ["disk", "filesystem", "space"],
+    "webhook_labels": {"alertname": "DiskAlmostFull"}
   },
   "network": {
     "alert_id": "ALERT-NET-001",
@@ -27,6 +39,28 @@
     "timestamp_offset_minutes": -15,
     "metrics": "packet_loss, latency",
     "expected_root_cause": "Network partition fault",
-    "expected_remediation": "restart_service.yml (restart payment-service)"
+    "expected_remediation": "restart_service.yml (restart payment-service)",
+    "healthy_thresholds": {
+      "packet_loss": {"max": 2},
+      "latency": {"max": 100}
+    },
+    "webhook_keywords": ["network", "packet", "partition"],
+    "webhook_labels": {"alertname": "NetworkPartition"}
+  },
+  "oom": {
+    "alert_id": "ALERT-OOM-001",
+    "service": "cache-service",
+    "severity": "critical",
+    "description": "Cache service repeatedly killed by the OOM killer; hit rate collapsing.",
+    "timestamp_offset_minutes": -8,
+    "metrics": "memory_usage, restart_count",
+    "expected_root_cause": "Memory leak causing OOM kills",
+    "expected_remediation": "restart_oom_service.yml (restart cache-service with higher limit)",
+    "healthy_thresholds": {
+      "memory_usage": {"max": 75},
+      "restart_count": {"max": 1}
+    },
+    "webhook_keywords": ["oom", "memory", "killed"],
+    "webhook_labels": {"alertname": "OOMKilled"}
   }
 }

@@ -23,8 +23,12 @@ import os
 import re
 import sys
 
-from trigger_fault import SCENARIOS
-from autosre.agent import run_agent
+from autosre.bootstrap import load_env
+
+load_env()
+
+from trigger_fault import SCENARIOS  # noqa: E402
+from autosre.agent import run_agent  # noqa: E402
 
 logging.basicConfig(
     level=logging.INFO,

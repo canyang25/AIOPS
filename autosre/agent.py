@@ -11,21 +11,18 @@ import time
 from datetime import datetime, timezone
 from typing import List, Optional, Union
 
-from scenarios import SCENARIOS
-from trigger_fault import simulate
+from autosre.bootstrap import load_env
 
-from autosre.config import AutoSREConfig
-from autosre.logging import TraceContext, log_extra, setup_logging
-from autosre.retry import retry_llm
-from autosre.store import IncidentStore
-from autosre.tools import TOOLS, _dispatch
+load_env()
 
-try:
-    from dotenv import load_dotenv
+from scenarios import SCENARIOS  # noqa: E402
+from trigger_fault import simulate  # noqa: E402
 
-    load_dotenv()
-except ImportError:
-    pass
+from autosre.config import AutoSREConfig  # noqa: E402
+from autosre.logging import TraceContext, log_extra, setup_logging  # noqa: E402
+from autosre.retry import retry_llm  # noqa: E402
+from autosre.store import IncidentStore  # noqa: E402
+from autosre.tools import TOOLS, _dispatch  # noqa: E402
 
 logger = logging.getLogger(__name__)
 
@@ -42,13 +39,23 @@ You are given a production fault alert. Investigate and resolve it end to end:
 Use tools before concluding -- do not guess a root cause without checking metrics and logs.
 When you have written the final report, stop calling tools and return only the report."""
 
+# Fields that must never reach the LLM prompt.
+_ALERT_DENYLIST = {
+    "expected_root_cause",
+    "expected_remediation",
+    "metrics",
+    "healthy_thresholds",
+    "webhook_labels",
+    "webhook_keywords",
+}
+
 
 def _sanitize_alert(scenario: dict) -> dict:
     """Hide ground-truth and metric hints from the LLM."""
     return {
         k: v
         for k, v in scenario.items()
-        if not k.startswith("expected_") and k != "metrics"
+        if not k.startswith("expected_") and k not in _ALERT_DENYLIST
     }
 
 
@@ -102,7 +109,7 @@ def _backend_for_provider(provider: str) -> Optional[dict]:
         return {
             "kind": "anthropic",
             "provider": "anthropic",
-            "model": os.getenv("ANTHROPIC_MODEL", "claude-sonnet-5"),
+            "model": os.getenv("ANTHROPIC_MODEL", "claude-sonnet-4-5"),
         }
     return None
 
@@ -308,13 +315,21 @@ def _run_anthropic(
     return ""
 
 
+def _metric_still_unhealthy(latest: float, thresholds: dict) -> bool:
+    """Return True if *latest* violates scenario healthy_thresholds."""
+    if "max" in thresholds and latest > float(thresholds["max"]):
+        return True
+    if "min" in thresholds and latest < float(thresholds["min"]):
+        return True
+    return False
+
+
 def _maybe_rollback(scenario: dict, cfg: AutoSREConfig) -> Optional[dict]:
     """Independent rollback safety net after remediation.
 
-    If ``AUTOSRE_ROLLBACK_PLAYBOOK`` is set, re-query the first metric hint;
-    if the latest value is still in the upper failure half of the fixture range
-    (heuristic: latest >= avg of returned window and >= 70% of max), execute
-    the rollback playbook.
+    If ``AUTOSRE_ROLLBACK_PLAYBOOK`` is set, re-query the first metric hint and
+    compare against scenario ``healthy_thresholds``. When thresholds are
+    missing, skip rather than applying brittle heuristics.
     """
     playbook = cfg.rollback_playbook
     if not playbook:
@@ -323,39 +338,55 @@ def _maybe_rollback(scenario: dict, cfg: AutoSREConfig) -> Optional[dict]:
     metrics_hint = scenario.get("metrics") or ""
     metric_name = metrics_hint.split(",")[0].strip() if metrics_hint else ""
     service = scenario.get("service", "")
+    thresholds = (scenario.get("healthy_thresholds") or {}).get(metric_name)
     if not metric_name or not service:
         logger.warning("Rollback configured but no metric/service available; skipping.")
         return None
+    if not thresholds:
+        logger.warning(
+            "Rollback configured but no healthy_thresholds for metric %s; skipping.",
+            metric_name,
+        )
+        return {"rollback": False, "reason": "missing healthy_thresholds", "skipped": True}
 
     from autosre.tools import _tool_query_metrics
 
     try:
-        stats = _tool_query_metrics(service, metric_name)
+        stats = _tool_query_metrics(service, metric_name, cfg=cfg)
     except Exception as exc:
         logger.error("Rollback metric check failed: %s", exc)
         return {"error": str(exc), "skipped": True}
 
-    latest = stats.get("latest", 0)
-    avg = stats.get("avg", 0)
-    mx = stats.get("max", 0)
-    still_failing = latest >= avg and (mx == 0 or latest >= 0.7 * mx)
+    latest = float(stats.get("latest", 0))
+    still_failing = _metric_still_unhealthy(latest, thresholds)
     logger.info(
-        "Rollback check metric=%s latest=%s avg=%s max=%s failing=%s",
+        "Rollback check metric=%s latest=%s thresholds=%s failing=%s",
         metric_name,
         latest,
-        avg,
-        mx,
+        thresholds,
         still_failing,
     )
     if not still_failing:
-        return {"rollback": False, "reason": "metrics recovered"}
+        return {
+            "rollback": False,
+            "reason": "metrics within healthy_thresholds",
+            "latest": latest,
+            "thresholds": thresholds,
+        }
 
     result = _dispatch(
         "run_playbook",
         {"playbook": playbook, "hosts": [service]},
+        cfg=cfg,
     )
     logger.info("Rollback playbook %s result: %s", playbook, result)
-    return {"rollback": True, "playbook": playbook, "result": result}
+    return {
+        "rollback": True,
+        "playbook": playbook,
+        "result": result,
+        "latest": latest,
+        "thresholds": thresholds,
+    }
 
 
 def _write_report(scenario: dict, report: str) -> str:
@@ -366,6 +397,35 @@ def _write_report(scenario: dict, report: str) -> str:
         f.write(report)
     logger.info("Report written to %s", path)
     return path
+
+
+def _persist(
+    cfg: AutoSREConfig,
+    *,
+    scenario: dict,
+    scenario_name: str,
+    status: str,
+    report_path: str = "",
+    report_text: str = "",
+    backend: str = "",
+    model: str = "",
+    duration_ms: Optional[int] = None,
+    metadata: Optional[dict] = None,
+) -> int:
+    store = IncidentStore(cfg.db_path)
+    return store.save_incident(
+        alert_id=scenario.get("alert_id", scenario_name),
+        service=scenario.get("service", ""),
+        scenario=scenario_name,
+        severity=scenario.get("severity", ""),
+        status=status,
+        report_path=report_path,
+        report_text=report_text,
+        backend=backend,
+        model=model,
+        duration_ms=duration_ms,
+        metadata=metadata or {},
+    )
 
 
 def run_agent(scenario_name: str, fallback: bool = False) -> int:
@@ -397,10 +457,15 @@ def run_agent(scenario_name: str, fallback: bool = False) -> int:
         report = ""
         used_backend: Optional[dict] = None
         last_error: Optional[Exception] = None
+        timed_out = False
 
         for backend in backends:
             if _deadline_exceeded(deadline):
-                logger.error("Incident timeout before trying backend %s", backend.get("provider"))
+                timed_out = True
+                logger.error(
+                    "Incident timeout before trying backend %s",
+                    backend.get("provider"),
+                )
                 break
             try:
                 logger.info(
@@ -410,14 +475,22 @@ def run_agent(scenario_name: str, fallback: bool = False) -> int:
                 )
                 if backend["kind"] == "anthropic":
                     report = _run_anthropic(
-                        alert, backend, max_iterations=cfg.max_iterations, deadline=deadline
+                        alert,
+                        backend,
+                        max_iterations=cfg.max_iterations,
+                        deadline=deadline,
                     )
                 else:
                     report = _run_openai_compatible(
-                        alert, backend, max_iterations=cfg.max_iterations, deadline=deadline
+                        alert,
+                        backend,
+                        max_iterations=cfg.max_iterations,
+                        deadline=deadline,
                     )
                 used_backend = backend
                 last_error = None
+                if _deadline_exceeded(deadline) and not report:
+                    timed_out = True
                 break
             except Exception as exc:
                 last_error = exc
@@ -429,7 +502,21 @@ def run_agent(scenario_name: str, fallback: bool = False) -> int:
                 )
                 continue
 
+        duration_ms = int((time.monotonic() - start) * 1000)
+        meta_base = {"trace_id": trace.trace_id}
+
         if last_error is not None and not report:
+            _persist(
+                cfg,
+                scenario=scenario,
+                scenario_name=scenario_name,
+                status="failed",
+                duration_ms=duration_ms,
+                metadata={
+                    **meta_base,
+                    "error": f"{type(last_error).__name__}: {last_error}",
+                },
+            )
             if fallback:
                 logger.error(
                     "All backends failed (%s: %s). Falling back to simulation.",
@@ -445,7 +532,20 @@ def run_agent(scenario_name: str, fallback: bool = False) -> int:
             raise last_error
 
         if not report:
-            logger.info("Agent produced no report (hit iteration/timeout limit or empty response).")
+            status = "timeout" if timed_out or _deadline_exceeded(deadline) else "failed"
+            _persist(
+                cfg,
+                scenario=scenario,
+                scenario_name=scenario_name,
+                status=status,
+                backend=(used_backend or {}).get("provider", ""),
+                model=(used_backend or {}).get("model", ""),
+                duration_ms=duration_ms,
+                metadata={**meta_base, "reason": "empty report"},
+            )
+            logger.info(
+                "Agent produced no report (hit iteration/timeout limit or empty response)."
+            )
             return 1
 
         logger.info("\n=== Incident report ===\n")
@@ -453,24 +553,28 @@ def run_agent(scenario_name: str, fallback: bool = False) -> int:
         report_path = _write_report(scenario, report)
 
         rollback_info = _maybe_rollback(scenario, cfg)
+        status = "resolved"
+        if isinstance(rollback_info, dict) and rollback_info.get("rollback"):
+            result = rollback_info.get("result") or {}
+            if result.get("denied") or (
+                isinstance(result.get("error"), str)
+                and "denied" in result["error"].lower()
+            ):
+                status = "denied"
+            elif result.get("error"):
+                status = "partial"
 
-        duration_ms = int((time.monotonic() - start) * 1000)
-        store = IncidentStore(cfg.db_path)
-        store.save_incident(
-            alert_id=scenario["alert_id"],
-            service=scenario.get("service", ""),
-            scenario=scenario_name,
-            severity=scenario.get("severity", ""),
-            status="resolved",
+        _persist(
+            cfg,
+            scenario=scenario,
+            scenario_name=scenario_name,
+            status=status,
             report_path=report_path,
             report_text=report,
             backend=(used_backend or {}).get("provider", ""),
             model=(used_backend or {}).get("model", ""),
             duration_ms=duration_ms,
-            metadata={
-                "trace_id": trace.trace_id,
-                "rollback": rollback_info,
-            },
+            metadata={**meta_base, "rollback": rollback_info},
         )
         return 0
 

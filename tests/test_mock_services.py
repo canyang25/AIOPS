@@ -8,7 +8,9 @@ when a playbook remediates metrics.  We patch ``requests.post`` in those
 tests so they run without live servers.
 """
 
+from pathlib import Path
 from unittest.mock import patch, MagicMock
+import json
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -230,8 +232,12 @@ class TestMockAnsible:
         assert resp.status_code == 200
         body = resp.get_json()
         playbooks = body["playbooks"]
-        assert "restore_db_pool.yml" in playbooks
-        assert "clean_disk_space.yml" in playbooks
-        assert "restart_service.yml" in playbooks
+        fixture = json.loads(
+            (
+                Path(__file__).resolve().parents[1] / "fixtures" / "playbooks.json"
+            ).read_text(encoding="utf-8")
+        )
+        for name in fixture:
+            assert name in playbooks
         for name, info in playbooks.items():
             assert "description" in info

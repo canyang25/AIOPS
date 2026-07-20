@@ -41,7 +41,7 @@ class TestResolveBackend:
 
         assert cfg is not None
         assert cfg["kind"] == "anthropic"
-        assert cfg["model"] == "claude-sonnet-5"
+        assert cfg["model"] == "claude-sonnet-4-5"
 
     def test_resolve_backend_ollama(self, monkeypatch):
         _clear_llm_env(monkeypatch)
@@ -107,6 +107,8 @@ class TestSanitizeAlert:
         assert "metrics" not in alert
         assert "expected_root_cause" not in alert
         assert "expected_remediation" not in alert
+        assert "healthy_thresholds" not in alert
+        assert "webhook_labels" not in alert
         assert "alert_id" in alert
         assert "description" in alert
 
