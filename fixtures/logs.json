@@ -15,5 +15,10 @@
     {"timestamp": "2025-06-04T16:40:00Z", "level": "WARN", "message": "Network latency increased to 800ms"},
     {"timestamp": "2025-06-04T16:45:00Z", "level": "ERROR", "message": "Connection reset by peer"},
     {"timestamp": "2025-06-04T16:46:00Z", "level": "ERROR", "message": "Payment gateway timeout"}
+  ],
+  "cache-service": [
+    {"timestamp": "2025-06-04T18:00:00Z", "level": "WARN", "message": "Heap usage crossed 92%"},
+    {"timestamp": "2025-06-04T18:02:00Z", "level": "ERROR", "message": "Process killed by OOM killer"},
+    {"timestamp": "2025-06-04T18:03:00Z", "level": "ERROR", "message": "cache-service restart loop detected"}
   ]
 }

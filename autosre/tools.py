@@ -1,16 +1,20 @@
-"""Tool definitions and HTTP wrappers for mock observability backends."""
+"""Tool definitions and thin dispatch over backend adapters + policy gate."""
 
 from __future__ import annotations
 
 import logging
 import time
-from typing import Any, Optional
+from typing import Optional
 
-import requests
-
+from autosre import audit
 from autosre.approval import ApprovalGate
-from autosre.config import AutoSREConfig, config as default_config
+from autosre.backends import ansible as ansible_backend
+from autosre.backends import logs as logs_backend
+from autosre.backends import metrics as metrics_backend
+from autosre.config import AutoSREConfig
 from autosre.logging import log_extra
+from autosre.metrics_self import METRICS
+from autosre.policy import evaluate_remediation
 from autosre.retry import retry_http
 
 logger = logging.getLogger(__name__)
@@ -71,72 +75,32 @@ TOOLS = [
 ]
 
 
-def _urls(cfg: Optional[AutoSREConfig] = None) -> AutoSREConfig:
-    return cfg or default_config
+def _cfg(cfg: Optional[AutoSREConfig] = None) -> AutoSREConfig:
+    return cfg or AutoSREConfig.from_env()
 
 
 @retry_http
 def _tool_query_metrics(service: str, metric: str, cfg: Optional[AutoSREConfig] = None) -> dict:
-    c = _urls(cfg)
-    resp = requests.get(
-        f"{c.prometheus_url}/api/v1/query_range",
-        params={"service": service, "metric": metric},
-        timeout=15,
-    )
-    resp.raise_for_status()
-    values = resp.json()["data"]["result"][0]["values"]
-    nums = [v for _, v in values]
-    return {
-        "service": service,
-        "metric": metric,
-        "points": len(nums),
-        "min": round(min(nums), 2),
-        "max": round(max(nums), 2),
-        "avg": round(sum(nums) / len(nums), 2),
-        "latest": round(nums[-1], 2),
-        "raw_values": nums,
-    }
+    return metrics_backend.query_metrics(service, metric, cfg=_cfg(cfg))
 
 
 @retry_http
 def _tool_search_logs(
     service: str, level: str = None, cfg: Optional[AutoSREConfig] = None
 ) -> dict:
-    c = _urls(cfg)
-    query: dict[str, Any] = {"service": service}
-    if level:
-        query["level"] = level
-    resp = requests.post(f"{c.elk_url}/_search", json={"query": query}, timeout=15)
-    resp.raise_for_status()
-    hits = resp.json()["hits"]
-    return {
-        "service": service,
-        "level": level,
-        "total": hits["total"]["value"],
-        "logs": [h["_source"] for h in hits["hits"]],
-    }
+    return logs_backend.search_logs(service, level, cfg=_cfg(cfg))
 
 
 @retry_http
 def _tool_run_playbook(
     playbook: str, hosts: list = None, cfg: Optional[AutoSREConfig] = None
 ) -> dict:
-    c = _urls(cfg)
-    resp = requests.post(
-        f"{c.ansible_url}/api/v1/execute",
-        json={"playbook": playbook, "hosts": hosts or ["localhost"]},
-        timeout=15,
-    )
-    resp.raise_for_status()
-    return resp.json()
+    return ansible_backend.run_playbook(playbook, hosts, cfg=_cfg(cfg))
 
 
 @retry_http
 def _tool_list_playbooks(cfg: Optional[AutoSREConfig] = None) -> dict:
-    c = _urls(cfg)
-    resp = requests.get(f"{c.ansible_url}/api/v1/playbooks", timeout=15)
-    resp.raise_for_status()
-    return resp.json()
+    return ansible_backend.list_playbooks(cfg=_cfg(cfg))
 
 
 TOOL_DISPATCH = {
@@ -153,21 +117,59 @@ def _dispatch(
     cfg: Optional[AutoSREConfig] = None,
     approval: Optional[ApprovalGate] = None,
 ) -> dict:
-    """Dispatch a tool call, gating run_playbook behind the approval gate."""
+    """Dispatch a tool call through policy + approval gates for remediations."""
     start = time.monotonic()
+    runtime_cfg = _cfg(cfg)
     try:
         if name not in TOOL_DISPATCH:
             raise KeyError(f"unknown tool: {name}")
 
         if name == "run_playbook":
-            gate = approval or ApprovalGate(cfg)
             playbook = tool_input.get("playbook", "")
             hosts = tool_input.get("hosts") or ["localhost"]
-            if not gate.request_approval(playbook, hosts, context=tool_input):
-                return {"error": "Remediation denied by operator"}
 
-        # Strip cfg from kwargs passed to wrappers unless they accept it via dispatch.
+            decision = evaluate_remediation(playbook, hosts, runtime_cfg)
+            if not decision.allowed:
+                METRICS.incr("remediations_blocked")
+                audit.write_event(
+                    "remediation_denied_policy",
+                    {
+                        "playbook": playbook,
+                        "hosts": hosts,
+                        "reason": decision.reason,
+                        "blast_hosts": decision.blast_hosts,
+                    },
+                    path=runtime_cfg.audit_log_path,
+                )
+                return {
+                    "error": f"Remediation denied by policy: {decision.reason}",
+                    "denied": True,
+                    "policy": decision.reason,
+                }
+
+            gate = approval or ApprovalGate(runtime_cfg)
+            if not gate.request_approval(playbook, hosts, context=tool_input):
+                METRICS.incr("remediations_blocked")
+                audit.write_event(
+                    "remediation_denied_operator",
+                    {"playbook": playbook, "hosts": hosts},
+                    path=runtime_cfg.audit_log_path,
+                )
+                return {"error": "Remediation denied by operator", "denied": True}
+
+            METRICS.incr("remediations_allowed")
+            audit.write_event(
+                "remediation_allowed",
+                {
+                    "playbook": playbook,
+                    "hosts": hosts,
+                    "blast_hosts": decision.blast_hosts,
+                },
+                path=runtime_cfg.audit_log_path,
+            )
+
         kwargs = dict(tool_input)
+        kwargs["cfg"] = runtime_cfg
         result = TOOL_DISPATCH[name](**kwargs)
         duration_ms = round((time.monotonic() - start) * 1000, 2)
         logger.info(
@@ -175,7 +177,7 @@ def _dispatch(
             extra=log_extra(tool=name, duration_ms=duration_ms),
         )
         return result
-    except Exception as exc:  # surface tool failures to the model instead of crashing
+    except Exception as exc:
         duration_ms = round((time.monotonic() - start) * 1000, 2)
         logger.warning(
             "tool error: %s",

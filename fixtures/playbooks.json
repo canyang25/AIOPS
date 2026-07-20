@@ -46,5 +46,21 @@
         "latency": {"min": 5, "max": 50}
       }
     }
+  },
+  "restart_oom_service.yml": {
+    "description": "Restart an OOM-killed service with a higher memory limit.",
+    "match_keywords": ["oom", "memory", "cache", "kill"],
+    "result": {
+      "status": "success",
+      "message": "cache-service restarted with memory limit raised; OOM loop stopped.",
+      "changes": {"memory_limit": "512Mi -> 1Gi", "service_state": "restarted"}
+    },
+    "remediates": {
+      "service": "cache-service",
+      "metrics": {
+        "memory_usage": {"min": 40, "max": 70},
+        "restart_count": {"min": 0, "max": 1}
+      }
+    }
   }
 }

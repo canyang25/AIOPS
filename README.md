@@ -45,6 +45,7 @@ flowchart LR
 | `db` | order-service | API latency 200ms to 1.5s | DB connection pool misconfigured | `restore_db_pool.yml` |
 | `disk` | file-service | `/data` partition at 98% | Disk space exhausted | `clean_disk_space.yml` |
 | `network` | payment-service | Rising payment failure rate | Network partition | `restart_service.yml` |
+| `oom` | cache-service | OOM kills / restart loop | Memory leak causing OOM kills | `restart_oom_service.yml` |
 
 ## Quickstart
 
@@ -121,7 +122,15 @@ Set `LLM_FALLBACK_CHAIN=groq,openai,anthropic` to try providers in order when on
 
 ### Incident history
 
-Every successful agent run is written to Markdown under `reports/` and persisted in SQLite (`autosre.db` by default). Query via `GET /incidents` or `autosre.store.get_history()`.
+Every agent run (including failures/timeouts) is persisted in SQLite (`autosre.db` by default). Query via `GET /incidents`, `GET /incidents/{id}`, or `autosre.store.get_history()`.
+
+### Real backends
+
+Set `AUTOSRE_BACKEND_MODE=real` plus `AUTOSRE_HTTP_AUTHORIZATION` to talk to Prometheus (PromQL), Elasticsearch (Query DSL), and AWX (`/api/v2/job_templates/{id}/launch/`). Keep `mock` for the laptop Flask services. See `.env.example`.
+
+### Webhook auth
+
+When `AUTOSRE_WEBHOOK_TOKEN` is set, Alertmanager must send `Authorization: Bearer <token>`.
 
 ### Rollback safety net
 
@@ -135,12 +144,16 @@ If `AUTOSRE_ROLLBACK_PLAYBOOK` is set, AutoSRE re-checks a key metric after reme
 ├── server.py             # Thin CLI → autosre.webhook (FastAPI)
 ├── autosre/
 │   ├── agent.py          # LLM tool-use loop, fallback, rollback
-│   ├── tools.py          # Prometheus / ELK / Ansible wrappers
+│   ├── tools.py          # Thin tool dispatch + policy/approval gates
+│   ├── backends/         # mock|real Prometheus, ES, AWX adapters
+│   ├── policy.py         # Blast-radius / allowlist gate
+│   ├── audit.py          # Append-only JSONL audit log
 │   ├── approval.py       # Remediation approval gate
 │   ├── retry.py          # HTTP / LLM retries
 │   ├── logging.py        # JSON logs + trace IDs
 │   ├── store.py          # SQLite incident history
 │   ├── webhook.py        # Alertmanager webhook API
+│   ├── metrics_self.py   # In-process agent counters
 │   └── config.py         # Env-driven configuration
 ├── scenarios.py/.json    # Fault scenario definitions
 ├── eval.py               # Evaluation harness (--json, partial scores)

@@ -9,8 +9,12 @@ from __future__ import annotations
 
 import uvicorn
 
-from autosre.config import AutoSREConfig
-from autosre.webhook import create_app
+from autosre.bootstrap import load_env
+
+load_env()
+
+from autosre.config import AutoSREConfig  # noqa: E402
+from autosre.webhook import create_app  # noqa: E402
 
 
 def main() -> None:
