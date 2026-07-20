@@ -412,6 +412,15 @@ def _persist(
     duration_ms: Optional[int] = None,
     metadata: Optional[dict] = None,
 ) -> int:
+    from autosre.metrics_self import METRICS
+
+    if status == "resolved":
+        METRICS.incr("incidents_resolved")
+    elif status == "denied":
+        METRICS.incr("incidents_denied")
+    elif status in {"failed", "timeout", "partial"}:
+        METRICS.incr("incidents_failed")
+
     store = IncidentStore(cfg.db_path)
     return store.save_incident(
         alert_id=scenario.get("alert_id", scenario_name),
